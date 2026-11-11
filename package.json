@@ -6,6 +6,8 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node calculator.cjs",
-    "check:forge": "node crosscheck.cjs"
+    "check:forge": "node crosscheck.cjs",
+    "forge:self-test": "node runtime/forge/self-test.cjs",
+    "forge:update": "node runtime/forge/update-runtime.cjs"
   }
 }

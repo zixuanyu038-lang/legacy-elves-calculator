@@ -4,7 +4,8 @@ const {performance} = require('node:perf_hooks');
 const {ForgeClient} = require('./runtime/forge-client');
 const {ElvesForgeClient} = require('./forge-adapter.cjs');
 
-const input = process.env.ELVES_DECK || process.argv[2] || path.join(__dirname,'Deck - Elves.txt');
+const cliDeck = require.main===module ? process.argv[2] : null;
+const input = process.env.ELVES_DECK || cliDeck || path.join(__dirname,'Deck - Elves.txt');
 const [main, side] = fs.readFileSync(input, 'utf8').trim().split(/\r?\n\s*\r?\n/)
   .map(section => section.split(/\r?\n/).map(line => {
     const [, count, name] = line.match(/^(\d+)\s+(.+)$/);
@@ -261,7 +262,7 @@ function mechanics(path) {
   return [...labels].sort();
 }
 
-async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1}={}) {
+async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1,exportReplay}={}) {
   const root = makeRoot(f,orderSeed);
   const started = performance.now();
   const baseTurn=f.turn||3;
@@ -447,7 +448,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
     if (!winning && proof.state.players[0].life!==line.state.opponent) throw Error('Damage branch did not replay to the same life total');
     let life=f.life || 20;
     let previousPools=[{},{}];
-    return proof.trace.flatMap(x => {
+    const trace=proof.trace.flatMap(x => {
       const current=x.state.players[0].life;
       const lifeChanged=current!==life;
       life=current;
@@ -463,14 +464,21 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
       return [{kind:x.kind, action:x.action, generated, label:x.label, state:summary(x),
         attackers:x.state.players[1].battlefield.filter(c=>c.isAttacking).map(c=>[c.name,c.power])}];
     });
+    if(!exportReplay)return {trace};
+    try{
+      return {trace,replayBytes:exportReplay(proof,{seed:root.seed,ignoreOpponent:f.ignoreOpponent}),
+        replayComplete:proof.stopReason==='game_over'&&proof.state.status==='COMPLETE'};
+    }catch(error){
+      return {trace,replayError:error.message};
+    }
   }
   const line=winner || bestDamage;
-  const trace=line?await replay(line,!!winner):null;
+  const primary=line?await replay(line,!!winner):{trace:null};
   const verifiedAlternatives=[];
   if(winner&&f.ignoreOpponent){
     const others=[...winsByMechanics.values()].filter(x=>x.mechanics.join('|')!==winner.mechanics.join('|')).sort(compareWins);
     for(const other of others.slice(0,4)){
-      try{verifiedAlternatives.push({winner:other,trace:await replay(other,true)});}
+      try{verifiedAlternatives.push({winner:other,...await replay(other,true)});}
       catch(e){error(e);}
     }
   }
@@ -488,9 +496,9 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
     }
   }
   const winningStarts=[...childrenByAction.values()].filter(x=>x.state.winner==='1'&&x.state.turn<=lastTurn);
-  return {id:f.id,fixture:f,elapsedMs:Math.round(performance.now()-started),root:summary(initial),
+  return {id:f.id,fixture:f,engine:initial.engine,elapsedMs:Math.round(performance.now()-started),root:summary(initial),
     expanded:stats.expanded,leaves:stats.leaves,errors:stats.errors,gaps:[...stats.gaps],
-    initial:initial.actions,minOpponentLife,winner,bestDamage,trace,verifiedAlternatives,responses,winAgainstEnumeratedReplies:!!backed,winningStarts,firstActionOutcomes:[...childrenByAction.values()],samples};
+    initial:initial.actions,minOpponentLife,winner,bestDamage,...primary,verifiedAlternatives,responses,winAgainstEnumeratedReplies:!!backed,winningStarts,firstActionOutcomes:[...childrenByAction.values()],samples};
 }
 
 async function run() {

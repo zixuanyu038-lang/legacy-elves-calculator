@@ -1,15 +1,20 @@
 const http = require('node:http');
+const {randomUUID} = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const {ElvesForgeClient} = require('./forge-adapter.cjs');
+const {readForgeSelection} = require('./runtime/forge-runtime');
 const {search,fixtures,main,side} = require('./search.cjs');
 const {parseDeck,validateDeck} = require('./decks.cjs');
+const {encodeReplay} = require('./esreplay.cjs');
 
 const port = Number(process.env.ELVES_PORT || 8794);
 const host = `127.0.0.1:${port}`;
+const dataDir=path.join(__dirname,'.forge');
+const release=readForgeSelection(dataDir);
 let clients=[];
 function createWorker(javaHeap='2g'){
-  const options={dataDir:path.join(__dirname,'.forge'),javaHeap,activeProcessors:3,timeoutMs:45000};
+  const options={dataDir,release,javaHeap,activeProcessors:3,timeoutMs:45000};
   let worker=new ElvesForgeClient(options);
   let requests=0;
   return {
@@ -120,7 +125,7 @@ async function searchPosition(fixture,workerLimit,signal,seed){
   const count=fixture.ignoreOpponent?Math.min(workerLimit,Math.max(1,Math.floor(fixture.budget/420))):1;
   const results=await Promise.allSettled(clients.slice(0,count).map((worker,index)=>search(worker,{
     ...fixture,budget:Math.floor(fixture.budget/count)+Number(index<fixture.budget%count),
-  },{signal,orderSeed:seed,policyOffset:index,policyStride:count})));
+  },{signal,orderSeed:seed,policyOffset:index,policyStride:count,exportReplay:encodeReplay})));
   signal.throwIfAborted();
   const complete=results.filter(x=>x.status==='fulfilled').map(x=>x.value);
   if(!complete.length)throw results[0].reason;
@@ -131,7 +136,8 @@ async function searchPosition(fixture,workerLimit,signal,seed){
   const alternatives=new Map();
   const key=winner=>winner.mechanics.join('|');
   for(const result of complete){
-    for(const candidate of [{winner:result.winner,trace:result.trace},...result.verifiedAlternatives]){
+    const {winner,trace,replayBytes,replayError,replayComplete}=result;
+    for(const candidate of [{winner,trace,replayBytes,replayError,replayComplete},...result.verifiedAlternatives]){
       if(!candidate.winner||key(candidate.winner)===key(main.winner))continue;
       const name=key(candidate.winner);
       if(!alternatives.has(name)||byWin(candidate.winner,alternatives.get(name).winner)<0)alternatives.set(name,candidate);
@@ -140,9 +146,26 @@ async function searchPosition(fixture,workerLimit,signal,seed){
   const errors={};
   for(const result of complete)for(const [name,n] of Object.entries(result.errors))errors[name]=(errors[name]||0)+n;
   for(const result of results)if(result.status==='rejected')errors[result.reason.message]=(errors[result.reason.message]||0)+1;
-  return {...main,fixture,workerCount:count,expanded:complete.reduce((sum,x)=>sum+x.expanded,0),
+  return {...registerReplay(main,fixture.turn,0),fixture,workerCount:count,expanded:complete.reduce((sum,x)=>sum+x.expanded,0),
     elapsedMs:Math.max(...complete.map(x=>x.elapsedMs)),minOpponentLife:Math.min(...complete.map(x=>x.minOpponentLife)),errors,
-    verifiedAlternatives:[...alternatives.values()].sort((a,b)=>byWin(a.winner,b.winner)).slice(0,4)};
+    verifiedAlternatives:[...alternatives.values()].sort((a,b)=>byWin(a.winner,b.winner)).slice(0,4)
+      .map((route,index)=>registerReplay(route,fixture.turn,index+1))};
+}
+
+const replays=new Map();
+let replayCacheBytes=0;
+function registerReplay({replayBytes,...route},turn,index){
+  if(!replayBytes)return route;
+  while(replays.size>=25||replayCacheBytes+replayBytes.length>80*1024*1024){
+    const oldest=replays.keys().next().value;
+    replayCacheBytes-=replays.get(oldest).bytes.length;
+    replays.delete(oldest);
+  }
+  const replayUrl=`/replays/${randomUUID()}.esreplay`;
+  const filename=`legacy-elves-t${turn}-${route.replayComplete?`route-${index+1}`:'fragment'}.esreplay`;
+  replays.set(replayUrl,{bytes:replayBytes,filename});
+  replayCacheBytes+=replayBytes.length;
+  return {...route,replayUrl};
 }
 
 const mime = {'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/app.css':'text/css; charset=utf-8'};
@@ -165,6 +188,13 @@ const server=http.createServer(async(req,res)=> {
     } catch(e) {return json(res,500,{error:e.message});}
   }
   if (req.method==='GET' && req.url==='/examples') return json(res,200,demos);
+  if(req.method==='GET'&&req.url.startsWith('/replays/')){
+    const replay=replays.get(req.url);
+    if(!replay)return json(res,404,{error:'回放已过期，请重新搜索后下载。'});
+    res.writeHead(200,{'Content-Type':'application/gzip','Content-Length':replay.bytes.length,
+      'Content-Disposition':`attachment; filename="${replay.filename}"`});
+    return res.end(replay.bytes);
+  }
   const importing=req.url==='/decks/validate';
   if (req.method!=='POST' || (!importing&&req.url!=='/search')) return json(res,404,{error:'页面不存在。'});
   if (req.headers.origin && req.headers.origin!==`http://${host}` || req.headers['content-type']!=='application/json') {

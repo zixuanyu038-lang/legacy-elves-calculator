@@ -47,8 +47,12 @@ Forge 会检查牌名、主备牌合计的同名牌数量和主牌的生物类�
 - **本轮未找到斩杀**时，页面展示这次搜索打到的最低血量。有压血路线时，也会列出对应的操作。
 - **加入对手**时，搜索按所填手牌与战场进行，战斗声明由 Forge 策略执行。
 
-结果区可下载 JSON 搜索日志，核对每一步的选择和结算。
+结果区可把当前选中的路线导出为 `.esreplay`，用 Endstep Studio 打开即可逐步查看。回放从你输入的局面开始。打到一半的路线会导出为推演片段。需要核对搜索过程时，可另行下载 JSON 搜索日志。
 
 ## 规则引擎
 
 规则引擎来自 [Card-Forge/forge](https://github.com/Card-Forge/forge)。Java 执行器和 Node 客户端来自 [Endstep Studio 0.4.14](https://github.com/zixuanyu038-lang/end_step_reader_pro/tree/062948a57e45d2b48d58a5c6e9e002808b6c74bd)。`forge-adapter.cjs` 加入了 Elves 的找牌选择、产费和重置互动。
+
+双击 **自检Forge.cmd**，或运行 `npm run forge:self-test`。自检会启动计算器使用的 Forge 适配器，验证 Cub 地御苗地和额外产绿，以及 Natural Order 的费用和战斗斩杀。
+
+手动更新时，从 Forge 的正式发布页下载 `forge-installer-版本.tar.bz2`，拖到 **更新Forge.cmd**，或运行 `npm run forge:update -- install "安装包路径"`。脚本会联网核对官方 SHA-256，并在独立目录通过上述自检后记录新版本。下次启动计算器时生效。回到默认版本可运行 `npm run forge:update -- rollback`，再重启计算器。 [Forge 正式版下载](https://github.com/Card-Forge/forge/releases/latest)

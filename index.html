@@ -85,7 +85,11 @@
           <ol id="steps"></ol>
           <div id="response" class="note" hidden></div>
           <details id="diagnostics" hidden><summary>搜索详情</summary><ul id="detail"></ul></details>
-          <button type="button" class="secondary" id="download">下载可核对的搜索日志</button>
+          <div class="actions result-downloads">
+            <a class="secondary replay-download" id="download-replay" download hidden>导出 .esreplay</a>
+            <button type="button" class="secondary" id="download">下载搜索日志</button>
+          </div>
+          <p id="replay-status" class="metrics" role="status" hidden></p>
         </div>
       </section>
     </div>

@@ -24,7 +24,7 @@ textarea,input,select,button{font-size:inherit}
 textarea,input[type="number"],input[type="text"],select{border:1px solid var(--border);border-radius:7px;background:#fbfcfa;color:#172620;padding:8px 9px}
 textarea,input[type="number"],input[type="text"],.fields select{display:block;width:100%;margin-top:5px}
 textarea{resize:vertical;line-height:1.5}
-textarea:focus,input:focus,select:focus,button:focus-visible{outline:2px solid #49886a;outline-offset:2px}
+textarea:focus,input:focus,select:focus,button:focus-visible,.replay-download:focus-visible{outline:2px solid #49886a;outline-offset:2px}
 .check{display:flex;gap:8px;align-items:center;margin:7px 0 14px}
 input[type="checkbox"]{accent-color:var(--green)}
 details{border-top:1px solid var(--border);padding:12px 0}
@@ -38,7 +38,7 @@ summary{cursor:pointer;font-size:14px;font-weight:600}
 #deck-save{justify-self:start}
 #deck-status{color:var(--muted);font-size:13px}
 #deck-status[data-error="true"]{color:#a12727}
-button{border:1px solid transparent;border-radius:8px;background:var(--green);color:white;padding:9px 14px;font-weight:650;cursor:pointer}
+button,.replay-download{border:1px solid transparent;border-radius:8px;background:var(--green);color:white;padding:9px 14px;font-weight:650;cursor:pointer}
 button:disabled{opacity:.6;cursor:wait}
 .actions{justify-content:flex-start;margin-top:8px}
 #cancel,.secondary{background:#fff;color:var(--green);border-color:var(--border)}
@@ -50,7 +50,8 @@ button:disabled{opacity:.6;cursor:wait}
 #steps li{padding:0 0 10px 4px;overflow-wrap:anywhere}
 #steps small{display:block;color:var(--muted);margin-top:3px}
 .note{border-left:3px solid #bd873c;background:#faf5e9;padding:10px 12px;margin:12px 0}
-#download{margin-top:13px}
+.result-downloads{flex-wrap:wrap;margin-top:13px}
+.replay-download{text-decoration:none}
 [hidden]{display:none!important}
 @media(max-width:960px){.workspace{grid-template-columns:1fr}.panel{min-width:0}}
 @media(max-width:520px){main{padding:24px 12px}.panel{padding:15px}.section-head{align-items:flex-start;flex-direction:column}.fields{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{gap:8px}}

@@ -102,16 +102,27 @@ function show(result) {
   byId('scope').textContent=winner
     ? `固定库序 ${result.seed}，Forge 已重放并判定己方获胜。${winner.settled?'部分后续动作由 Forge 策略执行。':''}`
     : `在此库序和预算下，${fixture.ignoreOpponent?'目标':'对手'}最低到 ${Math.max(0,result.minOpponentLife)} 血。${trace?'下面是打到这个血量的路线。':'可以提高预算扩大搜索。'}`;
-  const routes=winner?[{winner,trace},...(result.verifiedAlternatives||[])]:[];
+  const routes=[result,...(result.verifiedAlternatives||[])];
   const routePicker=byId('route');
   routePicker.replaceChildren();
   routes.forEach((item,i)=>{
+    if(!item.winner)return;
     const turn=fixture.turn+Math.floor((item.winner.state.turn-fixture.turn)/2);
     routePicker.add(new Option(`T${turn} · ${fixture.life-item.winner.state.opponent} 点 · ${item.winner.mechanics.join(' ＋ ')||'战斗伤害'}`,String(i)));
   });
   byId('route-options').hidden=routes.length<2;
-  routePicker.onchange=()=>renderTrace(routes[Number(routePicker.value)].trace,fixture);
-  renderTrace(trace,fixture);
+  function showRoute(route){
+    renderTrace(route.trace,fixture);
+    const link=byId('download-replay'),status=byId('replay-status');
+    link.hidden=!route.replayUrl;
+    if(route.replayUrl)link.href=route.replayUrl;
+    else link.removeAttribute('href');
+    link.textContent=route.replayComplete?'导出 .esreplay':'导出推演片段 .esreplay';
+    status.hidden=!route.replayError;
+    status.textContent=route.replayError?`回放导出失败。 ${route.replayError}`:'';
+  }
+  routePicker.onchange=()=>showRoute(routes[Number(routePicker.value)]);
+  showRoute(result);
   const reply=byId('response');reply.hidden=fixture.ignoreOpponent;
   reply.textContent=responses?.length && result.winAgainstEnumeratedReplies
     ? '在 Forge 枚举的对手优先权动作下均找到赢法。战斗声明由 Forge 策略执行。'
