@@ -17,16 +17,20 @@ function createWorker(javaHeap='2g'){
   const options={dataDir,release,javaHeap,activeProcessors:3,timeoutMs:45000};
   let worker=new ElvesForgeClient(options);
   let requests=0;
+  let recycle=false;
   return {
-    request(input,requestOptions){
+    async request(input,requestOptions){
       // A branch always replays from its root, so it can start in a fresh Forge process.
-      if (requests>=900) {
+      if (recycle||requests>=900) {
         worker.close();
         worker=new ElvesForgeClient(options);
         requests=0;
+        recycle=false;
       }
       requests++;
-      return worker.request(input,requestOptions);
+      const {recycleWorker,...result}=await worker.request(input,requestOptions);
+      recycle=!!recycleWorker;
+      return result;
     },
     close(){worker.close();},
   };

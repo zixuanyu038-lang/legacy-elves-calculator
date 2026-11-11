@@ -33,7 +33,7 @@ node calculator.cjs
 | Natural Order 斩杀 | 25 血，当回合斩杀 | 打到 1 血，页面显示「本轮未找到斩杀」并列出操作 |
 | Natural Order 斩杀 | 25 血，再搜一个己方回合 | T3 打到 1 血，T4 摸到 Cub、地御苗地，再打 9 点 |
 
-想逐条校验手册里的核心互动，可运行 `node crosscheck.cjs`，复现 15 项 Forge 检查。
+想逐条校验手册里的核心互动和示例回归，可运行 `node crosscheck.cjs`。
 
 ## 输入自己的局面
 

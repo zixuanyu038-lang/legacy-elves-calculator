@@ -67,6 +67,22 @@ async function run() {
   const client=new ElvesForgeClient({dataDir:path.join(__dirname,'.forge'),activeProcessors:3});
   const log={};
   const tasks={
+    finishCombatWithoutReturningAnAttacker:async()=>{
+      const fixture={...fixtures.find(item=>item.id==='hoof-blockers'),ignoreOpponent:false,explicitOnly:true,depth:16,budget:420};
+      const result=await search(client,fixture,{orderSeed:2488});
+      assert.equal(result.winner,null);
+      assert.equal(result.minOpponentLife,1,'Hoof and three attackers should deal 19 through both blockers');
+      assert.ok(!result.bestDamage.path.some(action=>action.cardName===W&&action.kind==='activate'));
+      return result;
+    },
+    verifyTheSamePlanAfterOpponentPriorityChanges:async()=>{
+      const fixture={...fixtures.find(item=>item.id==='marwyn-recover'),ignoreOpponent:false,explicitOnly:true,depth:16,budget:700};
+      const result=await search(client,fixture,{orderSeed:2488});
+      assert.equal(result.winner?.state.opponent,-6);
+      assert.equal(result.winAgainstEnumeratedReplies,true,'Verify the plan after an opponent reply removes later priority choices');
+      assert.ok(!result.winner.path.some(action=>action.actorId===0&&action.kind!=='pass'));
+      return result;
+    },
     damageThroughForcedPasses:async()=>{
       const fixture=setup('forced-pass-damage',[L],[],{turn:3,life:2,ignoreOpponent:true,depth:16,budget:80});
       const result=await search(client,fixture,{orderSeed:2488});

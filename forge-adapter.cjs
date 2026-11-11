@@ -222,30 +222,34 @@ function extend(source) {
             require(card.isCreature(),"Earthbend was not restored");
         }
         if(root.has("impending")){`);
+  replace('response.add("result",execute(request));',`
+                JsonObject result=execute(request);
+                Runtime heap=Runtime.getRuntime();
+                result.addProperty("recycleWorker",heap.totalMemory()-heap.freeMemory()>heap.maxMemory()*0.72);
+                response.add("result",result);`);
   return source;
 }
 
 class ElvesForgeClient extends ForgeClient {
   constructor(options) {
     super(options);
-    const build=createHash('sha256').update(readFileSync(worker)).update(readFileSync(__filename)).digest('hex');
-    this.classes=path.join(this.classes,build.slice(0,16));
+    this.source=extend(readFileSync(worker,'utf8'));
+    this.sourceDigest=createHash('sha256').update(this.source).digest('hex');
+    this.classes=path.join(this.classes,this.sourceDigest.slice(0,16));
   }
 
   async compile() {
-    const source = extend(await fs.readFile(worker,'utf8'));
-    const digest = createHash('sha256').update(source).digest('hex');
     const stamp = path.join(this.classes,'source.sha256');
     await fs.mkdir(this.classes,{recursive:true});
-    if (await fs.readFile(stamp,'utf8').catch(()=>'') === digest) return;
+    if (await fs.readFile(stamp,'utf8').catch(()=>'') === this.sourceDigest) return;
     const file = path.join(this.classes,'EngineWorker.java');
-    await fs.writeFile(file,source);
+    await fs.writeFile(file,this.source);
     try {
       await execute(this.javac,['-encoding','UTF-8','-cp',this.jar,'-d',this.classes,file],{windowsHide:true,timeout:60000});
     } catch(e) {
       throw Error(String(e.stderr || e.message));
     }
-    await fs.writeFile(stamp,digest);
+    await fs.writeFile(stamp,this.sourceDigest);
   }
 }
 

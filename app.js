@@ -97,7 +97,12 @@ function show(result) {
   const {winner,trace,fixture,responses}=result;
   byId('status').hidden=true;
   byId('result').hidden=false;
-  byId('verdict').textContent=winner?(winner.state.turn===fixture.turn?'找到当回合斩杀':'找到后续回合赢法'):'本轮未找到斩杀';
+  const testedReply=responses?.filter(item=>!item.ownWinVerified&&item.outcome?.life>0).sort((a,b)=>b.outcome.life-a.outcome.life)[0];
+  const openReply=responses?.find(item=>!item.ownWinVerified&&item.kind!=='play_land'&&item.outcome?.winner!=='1');
+  const unproven=winner&&!fixture.ignoreOpponent&&!result.winAgainstEnumeratedReplies;
+  const winTitle=winner?.state.turn===fixture.turn?'当回合斩杀':'后续回合赢法';
+  const prefix=unproven?(testedReply||openReply?'找到有条件的':'已重放一条'):'找到';
+  byId('verdict').textContent=winner?prefix+winTitle:'本轮未找到斩杀';
   byId('metrics').textContent=`Forge ${result.engine} · ${result.expanded} 个节点 · ${result.workerCount} 个进程 · ${(result.elapsedMs/1000).toFixed(1)} 秒`;
   byId('scope').textContent=winner
     ? `固定库序 ${result.seed}，Forge 已重放并判定己方获胜。${winner.settled?'部分后续动作由 Forge 策略执行。':''}`
@@ -124,17 +129,20 @@ function show(result) {
   routePicker.onchange=()=>showRoute(routes[Number(routePicker.value)]);
   showRoute(result);
   const reply=byId('response');reply.hidden=fixture.ignoreOpponent;
+  const replyName=item=>`${item.cardName||item.action.split(' — ')[0]}${item.targetNames?.length?' → '+item.targetNames.join('、'):''}`;
   reply.textContent=responses?.length && result.winAgainstEnumeratedReplies
     ? '在 Forge 枚举的对手优先权动作下均找到赢法。战斗声明由 Forge 策略执行。'
-    : responses?.length
-    ? `这条胜局有其他合法应对，例如 ${responses[0].action.split(' — ')[0]}。看搜索详情可核对哪些应对已有赢法。`
+    : testedReply
+    ? `对手在${phaseName(testedReply.phase)}用 ${replyName(testedReply)}，照这条路线打完对手还剩 ${testedReply.outcome.life} 血。`
+    : openReply
+    ? `对手还可以 ${replyName(openReply)}，这条应对下尚未找到斩杀。`
     : fixture.oppHand.length||fixture.oppBoard.length
       ? '结果按所填的对手手牌与场面计算。战斗声明由 Forge 策略执行。'
       : '对手手牌和战场均按空处理。';
   const detail=byId('detail');detail.replaceChildren();
   for (const gap of result.gaps||[]) details(detail,gap);
   for (const [name,count] of Object.entries(result.errors||{})) details(detail,`${count} 次分支执行失败 · ${name}`);
-  for (const item of responses||[]) details(detail,`${item.ownWinVerified?'己方有赢法':item.checked?'已展开，未验证赢法':'未展开'} · ${item.action}`);
+  for (const item of responses||[]) details(detail,`${item.ownWinVerified?'己方有赢法':item.checked?'已展开，未验证赢法':'未展开'} · ${replyName(item)}`);
   byId('diagnostics').hidden=detail.children.length===0;
 }
 
@@ -169,7 +177,7 @@ function renderTrace(trace,fixture){
     if(action){
       const who=action.actorId===1?'':'对手 ';
       const tapped=action.tappedSources?.some(source=>source.cardId===action.cardId);
-      const verbs={cast:'施放',activate:'起动',play_land:'下',mana:tapped?'横置':'起动产费异能'};
+      const verbs={cast:action.description?.endsWith(' (Evoked)')?'呼魂施放':'施放',activate:'起动',play_land:'下',mana:tapped?'横置':'起动产费异能'};
       const window=state.turn+'/'+state.phase;
       const turn=fixture.turn+Math.floor((state.turn-fixture.turn)/2);
       const timing=window===lastWindow?'':`T${turn} ${phaseName(state.phase)} · `;

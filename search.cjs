@@ -285,6 +285,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
   }
   const initial = await expand([]);
   let winner = null;
+  const turnLimit=()=>f.ignoreOpponent&&winner?winner.state.turn:lastTurn;
   let explicitWinner = null;
   let bestDamage = null;
   let workLimit=f.budget;
@@ -293,19 +294,25 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
   const queue = [{node:initial,p:[],value:0}];
   const processed=new Set();
   const queuedStates=new Set();
+  const checkedCombat=new Map();
+  const combatBudget=Math.floor(f.budget/8);
+  const replyBudget=f.ignoreOpponent?0:Math.min(144,Math.floor(f.budget/12));
+  let combatExpanded=0;
   const childrenByAction = new Map();
   const winsByMechanics = new Map();
   const investment = x => x.path.reduce((mana,a)=>mana+Math.max(0,a.x||0),0);
   const decisions=p=>p.reduce((count,action)=>count+Number(action.kind!=='pass'),0);
-  const compareWins=(a,b)=>a.state.turn-b.state.turn||decisions(a.path)-decisions(b.path)||
-    a.path.length-b.path.length||investment(a)-investment(b);
+  const ownDecisions=p=>p.filter(action=>action.actorId===1&&action.kind!=='pass').length;
+  const compareLines=(a,b)=>a.state.turn-b.state.turn||ownDecisions(a.path)-ownDecisions(b.path)||
+    decisions(a.path)-decisions(b.path)||a.path.length-b.path.length||investment(a)-investment(b);
   function positionValue(node){
     const own=node.state.players[1];
     const mana=Math.min(10,Object.values(own.manaPool).reduce((sum,amount)=>sum+amount,0));
     const creatures=own.battlefield.filter(card=>card.types.includes('Creature'));
     const attackPower=creatures.filter(card=>!card.tapped&&!card.hasSummoningSickness).reduce((sum,card)=>sum+Math.max(0,card.power),0);
+    const futurePower=node.state.turnNumber<lastTurn?creatures.reduce((sum,card)=>sum+Math.max(0,card.power),0):0;
     const damage=(f.life||20)-node.state.players[0].life;
-    return Math.min(35,attackPower)*2+own.battlefield.length*3+own.hand.length+mana*2+damage*2;
+    return Math.min(35,attackPower)*2+Math.min(30,futurePower)+own.battlefield.length*3+own.hand.length+mana*2+damage*2;
   }
   function enqueue(node,p,value) {
     const {sequenceNumber,...state}=node.state;
@@ -319,17 +326,18 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
     const result = {path:p,state,settled};
     if (state.turn <= lastTurn || node.stopReason==='search_horizon' || (state.turn === lastTurn+1 && state.phase === 'UNTAP')) {
       minOpponentLife = Math.min(minOpponentLife,state.opponent);
-      if (state.opponent < (f.life || 20) && (!bestDamage || state.opponent < bestDamage.state.opponent)) bestDamage=result;
+      if (state.opponent < (f.life || 20) && (!bestDamage || state.opponent < bestDamage.state.opponent ||
+        state.opponent===bestDamage.state.opponent&&compareLines(result,bestDamage)<0)) bestDamage=result;
     }
     if (state.winner === '1' && state.turn <= lastTurn) {
       if(!winner&&f.ignoreOpponent&&horizon===0)workLimit=Math.min(workLimit,stats.expanded+180);
-      if (!settled && (!explicitWinner || compareWins(result,explicitWinner)<0)) explicitWinner=result;
-      if (!winner || compareWins(result,winner)<0) winner=result;
+      if (!settled && (!explicitWinner || compareLines(result,explicitWinner)<0)) explicitWinner=result;
+      if (!winner || compareLines(result,winner)<0) winner=result;
       if(!settled){
         result.mechanics=mechanics(p);
         const family=result.mechanics.join('|');
         const previous=winsByMechanics.get(family);
-        if(!previous||compareWins(result,previous)<0)winsByMechanics.set(family,result);
+        if(!previous||compareLines(result,previous)<0)winsByMechanics.set(family,result);
       }
     }
     if (p.length && (state.status === 'COMPLETE' || state.turn > lastTurn || settled)) {
@@ -339,6 +347,42 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
     }
     if (samples.length < 14 && p.length && (settled || state.winner || state.opponent < (f.life || 20))) samples.push(result);
   }
+  const beforeDamage=new Set(['MAIN1','COMBAT_BEGIN','COMBAT_DECLARE_ATTACKERS','COMBAT_DECLARE_BLOCKERS','COMBAT_FIRST_STRIKE_DAMAGE']);
+  const canAdvanceCombat=(state,until=lastTurn)=>state.status!=='COMPLETE'&&
+    (state.turnNumber<until||state.turnNumber===until&&state.activePlayerId==='1'&&beforeDamage.has(state.phase));
+  async function followCombatPasses(node,p){
+    if(f.ignoreOpponent||combatExpanded>=combatBudget||!canAdvanceCombat(node.state)||node.state.stack.length)return;
+    const {state}=node;
+    if(state.activePlayerId!=='1')return;
+    const creatures=state.players[1].battlefield.filter(card=>card.types.includes('Creature'));
+    const power=cards=>cards.reduce((sum,card)=>sum+Math.max(0,card.power),0);
+    const ready=beforeDamage.has(state.phase)?power(creatures.filter(card=>card.isAttacking||(!card.tapped&&!card.hasSummoningSickness))):0;
+    const futureCombats=Math.floor((lastTurn-state.turnNumber)/2);
+    const potential=ready+futureCombats*power(creatures);
+    if(potential<=0||state.players[0].life-potential>Math.max(0,minOpponentLife))return;
+    const until=potential>=state.players[0].life?lastTurn:state.turnNumber;
+    // Test the combat already on the board. Every pass is a real search edge, so
+    // opponent responses remain available for the reply check and the main queue.
+    let current=node;
+    let route=p;
+    while(canAdvanceCombat(current.state,until)&&stats.expanded+stats.leaves<workLimit){
+      const {sequenceNumber,...position}=current.state;
+      const signature=JSON.stringify([position,current.actions.map(action=>action.key)]);
+      if((checkedCombat.get(signature)??Infinity)<=route.length)break;
+      checkedCombat.set(signature,route.length);
+      const pass=current.actions.find(action=>action.kind==='pass');
+      if(!pass)break;
+      signal?.throwIfAborted();
+      route=[...route,pass];
+      const before=stats.expanded;
+      try{
+        current=await expand(route);
+        record(current,route);
+        enqueue(current,route,positionValue(current)-route.length);
+      }catch(e){error(e);break;}
+      finally{combatExpanded+=stats.expanded-before;}
+    }
+  }
   if(f.ignoreOpponent){
     const probeLimit=Math.min(f.budget,stats.expanded+Math.floor(f.budget/2));
     const probes=['untap','recycle','develop','preserve','untap','preserve'];
@@ -346,7 +390,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
       if(index%policyStride!==policyOffset)continue;
       let node=initial;
       const p=[];
-      while(stats.expanded<Math.min(probeLimit,workLimit)&&node.state.turnNumber<=lastTurn&&node.state.status!=='COMPLETE'){
+      while(stats.expanded<Math.min(probeLimit,workLimit)&&node.state.turnNumber<=turnLimit()&&node.state.status!=='COMPLETE'){
         signal?.throwIfAborted();
         const allowed=decisions(p)<f.depth?node.actions:node.actions.filter(action=>action.kind==='pass');
         const moves=allowed.map(action=>({action,rank:goldfishPriority(action,node,style)})).sort((a,b)=>b.rank-a.rank);
@@ -388,6 +432,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
   }
   while (queue.length && stats.expanded + stats.leaves < workLimit) {
     signal?.throwIfAborted();
+    if(replyBudget&&explicitWinner&&stats.expanded+stats.leaves>=workLimit-replyBudget)break;
     queue.sort((a,b) => b.value-a.value || a.p.length-b.p.length);
     const entry=queue.shift();
     const {node,p,value}=entry;
@@ -397,7 +442,8 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
       if(processed.has(pathKey))continue;
       processed.add(pathKey);
       record(node,p);
-      if(node.state.status==='COMPLETE'||node.state.turnNumber>lastTurn)continue;
+      if(node.state.status==='COMPLETE'||node.state.turnNumber>turnLimit())continue;
+      await followCombatPasses(node,p);
       if(!f.ignoreOpponent&&!horizon&&explicitWinner&&!f.oppHand?.length&&!f.oppBoard?.length&&p.length>=explicitWinner.path.length)continue;
       if(!f.ignoreOpponent&&!f.explicitOnly&&p.length&&!['pass','mana'].includes(p.at(-1).kind)&&p.every(a=>a.actorId===1)&&stats.leaves<Math.ceil(f.budget/6)){
         try {
@@ -412,14 +458,30 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
         (f.ignoreOpponent?goldfishPriority(action,node,style)*0.12:0)})).sort((a,b)=>b.priority-a.priority);
     }
     if(!actions.length||stats.expanded+stats.leaves>=workLimit)continue;
-    const [{action,priority},...remaining]=actions;
-    if(remaining.length)queue.push({node,p,actions:remaining,value:value-2-(priority-remaining[0].priority)*0.4});
-    try {
-      const next=[...p,action];
-      const child=await expand(next);
-      record(child,next);
-      enqueue(child,next,priority+positionValue(child)-next.length);
-    } catch(e) {error(e);}
+    // Rank cards and other resolution choices together before pursuing any one
+    // resulting position. Repeated low-value priority actions can otherwise
+    // exhaust the budget before the other cards in the same search are tried.
+    const batchChoices=(!f.ignoreOpponent||horizon>0)&&actions[0].action.kind==='choice';
+    const batchSize=batchChoices?16:1;
+    const selected=actions.slice(0,batchSize);
+    const remaining=actions.slice(batchSize);
+    if(remaining.length)queue.push({node,p,actions:remaining,value:value-2-(selected.at(-1).priority-remaining[0].priority)*0.4});
+    const branches=[];
+    for(const {action,priority} of selected){
+      if(stats.expanded+stats.leaves>=workLimit)break;
+      try {
+        const next=[...p,action];
+        const child=await expand(next);
+        record(child,next);
+        const value=priority+positionValue(child)-next.length;
+        enqueue(child,next,value);
+        if(batchChoices)branches.push({child,next,value});
+      } catch(e) {error(e);}
+    }
+    if(!f.ignoreOpponent&&branches.length){
+      branches.sort((a,b)=>b.value-a.value);
+      await followCombatPasses(branches[0].child,branches[0].next);
+    }
   }
   const proofCache=new Map();
   function backedWin(p) {
@@ -432,12 +494,50 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
     else if(node.actions.length){
       const children=node.actions.map(a=>backedWin([...p,a]));
       const opponent=node.actions[0].actorId===0;
-      if(!opponent||children.every(Boolean))result=children.filter(Boolean).sort(compareWins)[0]||null;
+      if(!opponent||children.every(Boolean))result=children.filter(Boolean).sort(compareLines)[0]||null;
     }
     proofCache.set(id,result);
     return result;
   }
-  const backed=backedWin([]);
+  let backed=backedWin([]);
+  const replyOutcomes=new Map();
+  if(replyBudget&&!backed&&explicitWinner){
+    // Play the discovered plan through the other replies. A reply can remove
+    // priority windows, so match our actions by phase and key, then take real passes.
+    const {path:line,state}=explicitWinner;
+    const prefixes=line.map((action,i)=>({action,node:nodes.get(key(line.slice(0,i)))}));
+    for(const [index,{action:chosen,node:parent}] of prefixes.entries()){
+      if(chosen.actorId!==0||!parent)continue;
+      const plan=prefixes.slice(index+1).filter(({action,node})=>node&&action.actorId===1&&action.kind!=='pass');
+      for(const reply of parent.actions){
+        if(reply.key===chosen.key||stats.expanded+stats.leaves>=workLimit)continue;
+        const route=[...line.slice(0,index),reply];
+        const replyKey=key(route);
+        if(backedWin(route))continue;
+        try{
+          let node=await expand(route);
+          let step=0;
+          while(node.state.status!=='COMPLETE'&&node.state.turnNumber<=state.turn&&stats.expanded+stats.leaves<workLimit){
+            signal?.throwIfAborted();
+            const planned=plan[step];
+            const action=planned&&node.state.turnNumber===planned.node.state.turnNumber&&node.state.phase===planned.node.state.phase
+              ?node.actions.find(candidate=>candidate.key===planned.action.key):null;
+            const next=action||node.actions.find(candidate=>candidate.kind==='pass');
+            if(!next)break;
+            if(action)step++;
+            route.push(next);
+            node=await expand(route);
+          }
+          record(node,route);
+          if(node.state.status==='COMPLETE'||node.state.turnNumber>state.turn){
+            replyOutcomes.set(replyKey,{life:node.state.players[0].life,winner:node.state.winnerId??null});
+          }
+        }catch(e){error(e);}
+      }
+    }
+    proofCache.clear();
+    backed=backedWin([]);
+  }
   winner = backed || explicitWinner || winner;
   if(winner){
     winner.mechanics=mechanics(winner.path);
@@ -476,8 +576,12 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
   const primary=line?await replay(line,!!winner):{trace:null};
   const verifiedAlternatives=[];
   if(winner&&f.ignoreOpponent){
-    const others=[...winsByMechanics.values()].filter(x=>x.mechanics.join('|')!==winner.mechanics.join('|')).sort(compareWins);
-    for(const other of others.slice(0,4)){
+    const others=[...winsByMechanics.values()].filter(x=>x.mechanics.join('|')!==winner.mechanics.join('|')).sort(compareLines);
+    for(const other of others){
+      if(verifiedAlternatives.length>=4)break;
+      const simpler=[winner,...verifiedAlternatives.map(route=>route.winner)];
+      if(simpler.some(line=>line.state.turn<=other.state.turn&&line.state.opponent<=other.state.opponent&&
+        ownDecisions(line.path)<ownDecisions(other.path)&&line.mechanics.every(label=>other.mechanics.includes(label))))continue;
       try{verifiedAlternatives.push({winner:other,...await replay(other,true)});}
       catch(e){error(e);}
     }
@@ -488,10 +592,16 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
       const parent=nodes.get(key(winner.path.slice(0,i)));
       if (parent?.actions[0]?.actorId !== 0) continue;
       const chosen=winner.path[i]?.key;
+      const cards=parent.state.players.flatMap(player=>player.battlefield);
       for (const action of parent.actions.filter(a => a.key !== chosen && a.kind !== 'pass')) {
         const branch=[...winner.path.slice(0,i),action];
         const node=nodes.get(key(branch));
-        responses.push({step:i+1,action:action.label,targets:action.targets,checked:!!node,ownWinVerified:!!backedWin(branch)});
+        const targetNames=(action.targets||[]).flat().map(ref=>
+          cards.find(card=>`c:${card.id}`===ref)?.name||
+          parent.state.stack.find(item=>`s:${item.sourceCard.id}`===ref)?.sourceCard.name||
+          parent.state.players.find(player=>`p:${player.id}`===ref)?.name).filter(Boolean);
+        responses.push({step:i+1,phase:parent.state.phase,kind:action.kind,action:action.label,cardName:action.cardName,targets:action.targets,targetNames,
+          checked:!!node,ownWinVerified:!!backedWin(branch),outcome:replyOutcomes.get(key(branch))});
       }
     }
   }
