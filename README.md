@@ -28,7 +28,7 @@ node calculator.cjs
 
 | 示例 | 目标和搜索范围 | Forge 重放结果 |
 |---|---|---|
-| T2 地御 Cradle 斩杀 | 20 血，当回合斩杀 | 苗地、Llanowar Elves、Hoof 各打 6、6、10，共 22 点 |
+| T2 地御 Cradle 斩杀 | 20 血，当回合斩杀 | Forest 和 Llanowar Elves 付 Cub，苗地地御后分别产 4 绿和 7 绿。苗地、Llanowar Elves、Hoof 共打 22 点 |
 | Natural Order 斩杀 | 20 血，当回合斩杀 | Order 找 Hoof，战斗打 24 点 |
 | Natural Order 斩杀 | 25 血，当回合斩杀 | 打到 1 血，页面显示「本轮未找到斩杀」并列出操作 |
 | Natural Order 斩杀 | 25 血，再搜一个己方回合 | T3 打到 1 血，T4 摸到 Cub、地御苗地，再打 9 点 |

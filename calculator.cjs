@@ -91,7 +91,8 @@ async function searchPosition(fixture,workerLimit,signal,seed){
   const complete=results.filter(x=>x.status==='fulfilled').map(x=>x.value);
   if(!complete.length)throw results[0].reason;
   const byWin=(a,b)=>a.state.turn-b.state.turn||a.lateCub-b.lateCub||
-    Number(b.mechanics.includes('Cub 地御 Cradle'))-Number(a.mechanics.includes('Cub 地御 Cradle'))||a.path.length-b.path.length;
+    Number(b.mechanics.includes('Cub 地御 Cradle'))-Number(a.mechanics.includes('Cub 地御 Cradle'))||
+    a.earlyCradleTaps-b.earlyCradleTaps||a.path.length-b.path.length;
   complete.sort((a,b)=>a.winner&&b.winner?byWin(a.winner,b.winner):a.winner?-1:b.winner?1:a.minOpponentLife-b.minOpponentLife);
   const main=complete[0];
   const alternatives=new Map();

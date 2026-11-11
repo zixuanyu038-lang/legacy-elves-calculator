@@ -117,6 +117,14 @@ function summary(node) {
     grave:s.players[1].graveyard.map(c => c.name), mana:s.players[1].manaPool};
 }
 
+function canHoldCradle(node, cardId) {
+  const own=node.state.players[1];
+  const cradle=own.battlefield.find(card=>card.id===cardId);
+  return cradle&&!cradle.types.includes('Creature')&&
+    node.actions.some(a=>a.kind==='cast'&&a.cardName===U)&&
+    ((own.manaPool.G||0)>=2||node.actions.some(a=>a.kind==='mana'&&a.cardId!==cardId));
+}
+
 function moveValue(a, node) {
   if (a.kind === 'pass') return node.state.stack.length ? 37 : 14;
   if (a.actorId === 0) return 28;
@@ -127,7 +135,7 @@ function moveValue(a, node) {
     if (a.label.includes(A)) return 25;
     return a.label.endsWith('[]') ? 0 : 20;
   }
-  if (a.kind === 'mana') return a.cardName === C ? 32 : 11;
+  if (a.kind === 'mana') return a.cardName === C ? (canHoldCradle(node,a.cardId)?7:32) : 11;
   if (a.kind === 'play_land') return a.cardName===C?40:25;
   const paid=node.state.players[1].battlefield.find(c=>c.id===a.costCard);
   const costPenalty=paid&&!paid.tapped&&!paid.hasSummoningSickness?Math.max(1,paid.power):0;
@@ -204,6 +212,7 @@ function goldfishPriority(action,node,style) {
   if(kind==='mana'){
     const source=board.find(c=>c.id===action.cardId);
     if(!source)return 4;
+    if(cardName===C&&canHoldCradle(node,action.cardId))return 2;
     if(searchingResets&&floating<threshold){
       const isCreature=source.types.includes('Creature');
       const resettable=node.actions.some(a=>[R,W,K].includes(a.cardName)&&a.kind==='activate'&&a.costCard!==source.id&&(a.targets||[]).flat().includes(`c:${source.id}`));
@@ -244,8 +253,8 @@ function scenarioGuide(f) {
   const dork=f.board.find(name=>dorks.includes(name));
   if (f.turn!==2 || f.lands!==0 || !dork || !f.board.includes(F) || f.board.length!==2 ||
       f.oppHand?.length || f.oppBoard?.length || ![C,U,N,R,W].every(name=>f.hand.includes(name)) || f.hand.filter(name=>name===W).length<2) return null;
-  return {name:'T2-Cub–Cradle',steps:[move('play_land',C),move('mana',F),move('mana',C),move('cast',U),pick(U,C),move('mana',dork),
-    move('cast',R),move('cast',W),untap(R,C,F),move('mana',C),move('cast',W),untap(W,C,R),move('cast',R),
+  return {name:'T2-Cub–Cradle',steps:[move('play_land',C),move('mana',F),move('mana',dork),move('cast',U),pick(U,C),move('mana',C),
+    move('cast',R),move('cast',W),move('cast',W),untap(R,C,F),move('mana',C),untap(W,C,R),move('cast',R),
     untap(W,dork,R),move('cast',N,W),pick(N,H)]};
 }
 
@@ -300,7 +309,30 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
   const investment = x => x.path.reduce((mana,a)=>mana+Math.max(0,a.x||0),0);
   const lateCub = x => x.path.reduce((late,a,i)=>late+Number(a.kind==='cast'&&a.cardName===U&&nodes.get(key(x.path.slice(0,i)))?.state.phase==='MAIN2'),0);
   const bentCradle = x=>x.path.some(a=>a.kind==='choice'&&a.cardName===U&&a.label.includes(`[${C}]`));
-  const compareWins = (a,b) => a.state.turn-b.state.turn || lateCub(a)-lateCub(b) || Number(bentCradle(b))-Number(bentCradle(a)) || a.path.length-b.path.length || investment(a)-investment(b);
+  function cradleTapsBeforeEarthbend(path) {
+    const taps=new Map();
+    let count=0;
+    for (const [index,action] of path.entries()) {
+      if(action.kind==='mana'&&action.cardName===C){
+        const before=nodes.get(key(path.slice(0,index)))?.state;
+        const card=before?.players[1].battlefield.find(c=>c.id===action.cardId);
+        if(card&&!card.types.includes('Creature')){
+          const id=`${before.turnNumber}/${card.id}`;
+          taps.set(id,(taps.get(id)||0)+1);
+        }
+      }else if(action.kind==='choice'&&action.cardName===U&&action.label.includes(`[${C}]`)){
+        const target=action.key.match(/:\[(\d+)\]$/)?.[1];
+        const turn=nodes.get(key(path.slice(0,index)))?.state.turnNumber;
+        const id=`${turn}/${target}`;
+        count+=taps.get(id)||0;
+        taps.delete(id);
+      }
+    }
+    return count;
+  }
+  const compareWins = (a,b) => a.state.turn-b.state.turn || lateCub(a)-lateCub(b) ||
+    Number(bentCradle(b))-Number(bentCradle(a)) || a.earlyCradleTaps-b.earlyCradleTaps ||
+    a.path.length-b.path.length || investment(a)-investment(b);
   function record(node,p,settled=false) {
     const state = summary(node);
     const result = {path:p,state,settled};
@@ -309,6 +341,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
       if (p.length && state.opponent < (f.life || 20) && (!bestDamage || state.opponent < bestDamage.state.opponent)) bestDamage=result;
     }
     if (state.winner === '1' && state.turn <= lastTurn) {
+      result.earlyCradleTaps=cradleTapsBeforeEarthbend(p);
       if (!settled && (!explicitWinner || compareWins(result,explicitWinner)<0)) explicitWinner=result;
       if (!winner || compareWins(result,winner)<0) winner=result;
       if(!settled){
@@ -419,7 +452,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
     const node=nodes.get(id);
     if(!node || node.state.turnNumber>lastTurn)return null;
     let result=null;
-    if(node.state.winnerId==='1')result={path:p,state:summary(node),settled:false};
+    if(node.state.winnerId==='1')result={path:p,state:summary(node),settled:false,earlyCradleTaps:cradleTapsBeforeEarthbend(p)};
     else if(node.actions.length){
       const children=node.actions.map(a=>backedWin([...p,a]));
       const opponent=node.actions[0].actorId===0;
