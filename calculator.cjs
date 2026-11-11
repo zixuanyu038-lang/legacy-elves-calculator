@@ -8,8 +8,23 @@ const {parseDeck,validateDeck} = require('./decks.cjs');
 const port = Number(process.env.ELVES_PORT || 8794);
 const host = `127.0.0.1:${port}`;
 let clients=[];
-function createWorker(){
-  return new ElvesForgeClient({dataDir:path.join(__dirname,'.forge'),javaHeap:'2g',activeProcessors:3,timeoutMs:45000});
+function createWorker(javaHeap='2g'){
+  const options={dataDir:path.join(__dirname,'.forge'),javaHeap,activeProcessors:3,timeoutMs:45000};
+  let worker=new ElvesForgeClient(options);
+  let requests=0;
+  return {
+    request(input,requestOptions){
+      // A branch always replays from its root, so it can start in a fresh Forge process.
+      if (requests>=900) {
+        worker.close();
+        worker=new ElvesForgeClient(options);
+        requests=0;
+      }
+      requests++;
+      return worker.request(input,requestOptions);
+    },
+    close(){worker.close();},
+  };
 }
 const demos = Object.fromEntries(['opening-cub-hoof','ranger-zenith-20','double-untap-hoof','hoof-clean','hoof-blockers','hoof-force','hoof-swords','shepherd','zenith-top-end','marwyn-recover','vibrance-cradle','cub-sprint','progenitus-blockers']
   .map(id=>[id,fixtures.find(f=>f.id===id)]));
@@ -109,9 +124,8 @@ async function searchPosition(fixture,workerLimit,signal,seed){
   signal.throwIfAborted();
   const complete=results.filter(x=>x.status==='fulfilled').map(x=>x.value);
   if(!complete.length)throw results[0].reason;
-  const byWin=(a,b)=>a.state.turn-b.state.turn||a.lateCub-b.lateCub||
-    Number(b.mechanics.includes('Cub 地御 Cradle'))-Number(a.mechanics.includes('Cub 地御 Cradle'))||
-    a.earlyCradleTaps-b.earlyCradleTaps||a.path.length-b.path.length;
+  const decisions=winner=>winner.path.filter(action=>action.kind!=='pass').length;
+  const byWin=(a,b)=>a.state.turn-b.state.turn||decisions(a)-decisions(b)||a.path.length-b.path.length;
   complete.sort((a,b)=>a.winner&&b.winner?byWin(a.winner,b.winner):a.winner?-1:b.winner?1:a.minOpponentLife-b.minOpponentLife);
   const main=complete[0];
   const alternatives=new Map();
@@ -178,7 +192,8 @@ const server=http.createServer(async(req,res)=> {
     const workers=number(body.workers??2,1,4,'并行进程');
     const deck=body.deck==null?defaultDeck:await getDeck(body.deck,abort.signal);
     const fixture=requestFixture(body,deck);
-    while (clients.length<4) clients.push(createWorker());
+    const javaHeap=workers===1||!fixture.ignoreOpponent?'3g':'2g';
+    while (clients.length<4) clients.push(createWorker(javaHeap));
     const ask=[...new Set([...fixture.oppBoard.map(s=>s.split('|')[0]),...fixture.oppHand])];
     if (ask.length) {
       const cards=await clients[0].request({command:'catalog',names:ask},{signal:abort.signal});

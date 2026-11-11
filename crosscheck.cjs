@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {makeRoot,fixtures}=require('./search.cjs');
+const {search,makeRoot,fixtures}=require('./search.cjs');
 const {ElvesForgeClient}=require('./forge-adapter.cjs');
 
 const C="Gaea's Cradle", W='Wirewood Symbiote', T='Temur Sabertooth', R='Quirion Ranger';
@@ -67,6 +67,21 @@ async function run() {
   const client=new ElvesForgeClient({dataDir:path.join(__dirname,'.forge'),activeProcessors:3});
   const log={};
   const tasks={
+    damageThroughForcedPasses:async()=>{
+      const fixture=setup('forced-pass-damage',[L],[],{turn:3,life:2,ignoreOpponent:true,depth:16,budget:80});
+      const result=await search(client,fixture,{orderSeed:2488});
+      assert.equal(result.winner,null);
+      assert.equal(result.minOpponentLife,1);
+      assert.ok(result.trace?.some(step=>step.state.turn===3&&step.state.phase==='COMBAT_DAMAGE'&&step.state.opponent===1));
+      return result;
+    },
+    returnTheUntapTarget:async()=>{
+      const fixture=setup('return-untap-target',[F,L,W]);
+      const result=await check(client,fixture,[use(W,L,L)]);
+      assert.deepEqual(result.steps[0].hand,[L]);
+      assert.ok(!result.steps[0].board.some(([name])=>name===L));
+      return result;
+    },
     eachUntapOnce:async()=>{
       const fixture=setup('each-untap-once',[F,F,L,U,R,W,'Elvish Mystic']);
       const exclude=name=>node=>assert.ok(!node.actions.some(a=>a.kind==='activate'&&a.cardName===name),`${name} offered again`);

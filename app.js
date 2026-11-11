@@ -100,7 +100,7 @@ function show(result) {
   byId('verdict').textContent=winner?(winner.state.turn===fixture.turn?'找到当回合斩杀':'找到后续回合赢法'):'本轮未找到斩杀';
   byId('metrics').textContent=`Forge ${result.engine} · ${result.expanded} 个节点 · ${result.workerCount} 个进程 · ${(result.elapsedMs/1000).toFixed(1)} 秒`;
   byId('scope').textContent=winner
-    ? `固定库序 ${result.seed}，Forge 已重放并判定己方获胜。${winner.guide?`这条路线由 ${winner.guide} 公式引导展开。`:''}${winner.settled?'部分后续动作由 Forge 策略执行。':''}`
+    ? `固定库序 ${result.seed}，Forge 已重放并判定己方获胜。${winner.settled?'部分后续动作由 Forge 策略执行。':''}`
     : `在此库序和预算下，${fixture.ignoreOpponent?'目标':'对手'}最低到 ${Math.max(0,result.minOpponentLife)} 血。${trace?'下面是打到这个血量的路线。':'可以提高预算扩大搜索。'}`;
   const routes=winner?[{winner,trace},...(result.verifiedAlternatives||[])]:[];
   const routePicker=byId('route');
@@ -168,9 +168,11 @@ function renderTrace(trace,fixture){
       const costs=[...new Set((action.paidCards||[]).flatMap(x=>x.cards.map(c=>c.name)))];
       const made=manaText(produced.length?countMana(produced):entry.generated||{});
       const madeBy=produced.some(unit=>unit.sourceId!==action.cardId)?`（${describeManaSources(produced)}）`:'';
+      const tappedForAction=action.kind==='mana'?[]:(action.tappedSources||[]).map(source=>source.name);
       const describe=[
         made?`产 ${made}${madeBy}`:'',
         paid.length?`支付 ${manaText(countMana(paid))}（${describeManaSources(paid)}）`:'',
+        tappedForAction.length?`本步横置 ${tappedForAction.join('、')}`:'',
         costs.length?'用作费用 '+costs.join('、'):'',
         action.actorId===1&&(made||paid.length)?`剩余浮费 ${manaText(state.mana||{})||'0'}`:'',
       ].filter(Boolean).join(' · ');
@@ -194,6 +196,12 @@ function phaseName(phase){return ({MAIN1:'战斗前主阶段',COMBAT_BEGIN:'战�
 
 restoreDecks();
 deckSelect.addEventListener('change',changeDeck);
+byId('deck-name').addEventListener('keydown',e=>{
+  if (e.key==='Enter'&&!e.isComposing) {
+    e.preventDefault();
+    byId('deck-save').click();
+  }
+});
 byId('deck-save').addEventListener('click',async()=>{
   if (importingDeck||request) return;
   const text=byId('deck-text').value.trim();

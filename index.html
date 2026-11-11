@@ -66,10 +66,10 @@
           <summary>搜索范围</summary>
           <div class="fields">
             <label>目标<select id="horizon"><option value="0">当回合斩杀</option><option value="2">再搜一个己方回合</option><option value="4">再搜两个己方回合</option><option value="6">再搜三个己方回合</option><option value="8">再搜四个己方回合</option></select></label>
-            <label>预算<select id="budget"><option value="420">420 次</option><option value="1100" selected>1,100 次</option><option value="2800">2,800 次</option></select></label>
+            <label>预算<select id="budget"><option value="420">420 次</option><option value="1100">1,100 次</option><option value="2800" selected>2,800 次</option></select></label>
             <label>搜索深度<input id="depth" type="number" min="6" max="32" value="16" required></label>
             <label>库序种子<input id="seed" type="number" min="1" max="2147483647" value="2488" required></label>
-            <label>单人模式并行<select id="workers"><option value="1">1 个进程</option><option value="2" selected>2 个进程</option><option value="4">4 个进程</option></select></label>
+            <label>单人模式并行<select id="workers"><option value="1" selected>1 个进程</option><option value="2">2 个进程</option><option value="4">4 个进程</option></select></label>
           </div>
         </details>
         <div class="actions"><button id="run" type="submit">搜索赢法</button><button id="cancel" type="button" hidden>取消</button></div>

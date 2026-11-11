@@ -18,7 +18,20 @@ function extend(source) {
             var type=rules.getType();
             card.addProperty("creature",type.isCreature());
             card.addProperty("elfCreature",type.isCreature()&&(type.hasCreatureType("Elf")||rules.hasStartOfKeyword("Changeling",rules.getMainPart())));
+            Integer specificLimit=forge.deck.DeckFormat.canHaveSpecificNumberInDeck(paper);
+            int limit=forge.deck.DeckFormat.canHaveAnyNumberOf(paper)?0:
+                specificLimit!=null?specificLimit:forge.deck.DeckFormat.Constructed.getMaxCardCopies();
+            card.addProperty("copyLimit",limit);
             card.addProperty("oracleText",rules.getOracleText());`);
+  replace('        c.rollout=false;c.capture("root"', `
+        int lastSearchTurn=num(request,"lastSearchTurn",Integer.MAX_VALUE);
+        c.rollout=false;c.capture("root"`);
+  replace('            if(c.pathIndex>=c.path.size()&&c.rollout&&', `
+            if(!simulate&&c.pathIndex>=c.path.size()&&c.game.getPhaseHandler().getTurn()>lastSearchTurn){
+                stopped="search_horizon";
+                break;
+            }
+            if(c.pathIndex>=c.path.size()&&c.rollout&&`);
   replace('if(ability!=null&&ability.getHostCard().getName().equals("Atraxa, Grand Unifier")){',
     'if(ability!=null&&List.of("Atraxa, Grand Unifier","Eladamri, Korvecdal","Temur Sabertooth","Formidable Speaker","Once Upon a Time").contains(ability.getHostCard().getName())){');
   replace('if(destination==ZoneType.Battlefield&&origin.contains(ZoneType.Hand)&&', `
@@ -77,7 +90,37 @@ function extend(source) {
   replace('sa.isSpell()?"cast":"activate";boolean success;',
     'sa.isSpell()?"cast":sa.isManaAbility()?"mana":"activate";boolean success;');
   replace('else success=ComputerUtil.handlePlayingSpellAbility',
-    'else if(sa.isManaAbility())success=ComputerUtil.playNoStack(actor,sa,context.game,false);\n            else success=ComputerUtil.handlePlayingSpellAbility');
+    `else if(sa.isManaAbility())success=ComputerUtil.playNoStack(actor,sa,context.game,false);
+            else if(forced!=null&&returnsTarget(sa,forced.action))success=playWithSelectedReturn(sa,forced.action);
+            else success=ComputerUtil.handlePlayingSpellAbility`);
+  replace('        @Override public boolean playChosenSpellAbility', `
+        private boolean returnsTarget(SpellAbility ability,JsonObject action){
+            if(ability.isSpell()||!action.has("costCard")||!action.has("targets")||
+                ability.getPayCosts().getCostParts().stream().noneMatch(part->part instanceof forge.game.cost.CostReturn))return false;
+            String reference="c:"+action.get("costCard").getAsInt();
+            for(JsonElement group:action.getAsJsonArray("targets"))for(JsonElement target:group.getAsJsonArray())
+                if(reference.equals(target.getAsString()))return true;
+            return false;
+        }
+        private boolean playWithSelectedReturn(SpellAbility ability,JsonObject action){
+            Card returned=(Card)context.target("c:"+action.get("costCard").getAsInt());
+            ability.resetPaidHash();
+            ability.setPaidLife(0);
+            applyTargets(context,ability,action);
+            var stack=context.game.getStack();
+            stack.freezeStack(ability);
+            var payment=new forge.game.cost.CostPayment(ability.getPayCosts(),ability);
+            // The AI normally declines to return a target. The explicit search action can legally do so.
+            boolean paid=payment.payComputerCosts(new AiCostDecision(actor,ability,false){
+                @Override public forge.game.cost.PaymentDecision visit(forge.game.cost.CostReturn cost){
+                    return forge.game.cost.PaymentDecision.card(returned);
+                }
+            });
+            if(paid)stack.addAndUnfreeze(ability);
+            else stack.unfreezeStack();
+            return paid;
+        }
+        @Override public boolean playChosenSpellAbility`);
   replace('            SpellAbility[] actualAbility={sa};', `
             List<Mana> beforeMana=new ArrayList<>();
             if(context.includeTrace&&sa.isManaAbility())actor.getManaPool().forEach(beforeMana::add);

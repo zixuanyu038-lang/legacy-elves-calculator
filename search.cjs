@@ -70,17 +70,19 @@ function makeRoot(f, orderSeed=2488) {
     return [name, `Id:${base+i}`, ...flags].join('|');
   }).join(';');
   const deck = f.deck ? f.deck.main.flatMap(({name,count})=>Array(count).fill(name)) : elfDeck.slice();
-  const sideboard=f.deck?.side??side;
+  const sideboard=(f.deck?.side??side).flatMap(({name,count})=>Array(count).fill(name));
   for (const card of f.cuts || []) {
     const i=deck.indexOf(card);
     if (i < 0) throw Error(`Cannot side out ${card}`);
     deck.splice(i,1);
   }
-  for (const name of new Set(f.adds||[])) {
-    const available=sideboard.find(card=>card.name===name)?.count||0;
-    if (f.adds.filter(card=>card===name).length>available) throw Error(`Too many sideboard copies of ${name}`);
+  for (const name of f.adds||[]) {
+    const i=sideboard.indexOf(name);
+    if (i<0) throw Error(`Too many sideboard copies of ${name}`);
+    sideboard.splice(i,1);
+    deck.push(name);
   }
-  deck.push(...(f.adds || []));
+  sideboard.push(...(f.cuts||[]));
   const remaining = deck.slice();
   for (const card of [...f.board, ...f.hand, ...(f.grave || []), ...(f.exile || []), ...(f.top || [])]) {
     const i = remaining.indexOf(card.split('|')[0]);
@@ -114,7 +116,7 @@ function makeRoot(f, orderSeed=2488) {
   const usedUntaps=f.board.flatMap((card,i)=>card.split('|').includes('UntapUsed')?[boardBase+i]:[]);
   return {seed:orderSeed, manualMana:!!f.manualMana, ignoreOpponent:!!f.ignoreOpponent, earthbend, usedUntaps, viewerId:1, names:['Opponent','Elves'],gameId:f.id,
     activePlayerId:1, priorityPlayerId:1, firstPriorityId:1, history:[{}, {spellsCastThisGame:(f.noSpells ?? ((f.turn || 3)===1)) ? 0 : 1}],
-    decks:[{main:counts([...oppBoard.map(c=>c.split('|')[0]),...oppHand,...oppLibrary])},{main:counts(deck),sideboard}],
+    decks:[{main:counts([...oppBoard.map(c=>c.split('|')[0]),...oppHand,...oppLibrary])},{main:counts(deck),sideboard:counts(sideboard)}],
     stateText:[`turn=${f.turn || 3}`,'activeplayer=p1','activephase=MAIN1',
       `p0life=${f.life || 20}`,`p1life=${f.ownLife || 20}`,`p1landsplayed=${f.lands ?? 1}`,
       `p1manapool=${Array(f.green || 0).fill('G').join(' ')}`,
@@ -140,16 +142,14 @@ function canHoldCradle(node, cardId) {
     ((own.manaPool.G||0)>=2||node.actions.some(a=>a.kind==='mana'&&a.cardId!==cardId));
 }
 
+function paysWithTarget(action){
+  return action.costCard!=null&&(action.targets||[]).flat().includes(`c:${action.costCard}`);
+}
+
 function moveValue(a, node) {
   if (a.kind === 'pass') return node.state.stack.length ? 37 : 14;
   if (a.actorId === 0) return 28;
-  if (a.kind === 'choice') {
-    if (a.label.includes(H)) return 46;
-    if (a.label.includes('Progenitus')) return 42;
-    if (a.label.includes(C)) return 37;
-    if (a.label.includes(A)) return 25;
-    return a.label.endsWith('[]') ? 0 : 20;
-  }
+  if (a.kind === 'choice') return 20;
   if (a.kind === 'mana') return a.cardName === C ? (canHoldCradle(node,a.cardId)?7:32) : 11;
   if (a.kind === 'play_land') return a.cardName===C?40:25;
   const paid=node.state.players[1].battlefield.find(c=>c.id===a.costCard);
@@ -158,6 +158,7 @@ function moveValue(a, node) {
   if ([H,N,S,U,V,Y].includes(a.cardName)) return 32-costPenalty;
   if (a.cardName === Z) return a.x===8?46:25+a.x*2;
   if (a.kind === 'activate') {
+    if (paysWithTarget(a)) return 2;
     const targets = (a.targets || []).flat();
     const target = node.state.players[1].battlefield.find(c => targets.includes(`c:${c.id}`));
     if (target?.tapped) return 23-costPenalty;
@@ -179,26 +180,9 @@ function goldfishPriority(action,node,style) {
   const cubs=board.filter(card=>card.name===U).length;
   const floating=own.manaPool.G || 0;
   const threshold=hand.includes(H)?8:hand.includes(N)?4:hand.includes(Z)?9:hand.includes(U)?2:hand.length?4:0;
-  const searchingResets=style==='untap'||style==='recycle';
+  const searchingResets=style!=='preserve';
   const canCastFinisher=node.actions.some(a=>a.kind==='cast'&&(a.cardName===H||a.cardName===N&& !hand.includes(H)||a.cardName===Z&&a.x===8));
-  if(kind==='choice'){
-    if(cardName===U){
-      const land=board.find(card=>action.label.endsWith(`[${card.name}]`));
-      if(!land)return 0;
-      const canUntap=board.some(c=>[R,W,K].includes(c.name));
-      return (land.name===C&&(!land.tapped||canUntap||searchingResets)?125:85)+(land.tapped?0:15);
-    }
-    if(fetchlands.includes(cardName))return action.label.includes('[Forest]')?110:action.label.includes('[Bayou]')?103:action.label.includes('[Dryad Arbor]')?75:0;
-    if(cardName==='Once Upon a Time'){
-      const landCount=board.filter(card=>card.types.includes('Land')).length+hand.filter(name=>[F,'Bayou','Boseiju, Who Endures',C,...fetchlands].includes(name)).length;
-      if(action.label.includes(`[${C}]`))return landCount>=2?126:105;
-      if([F,'Bayou','Boseiju, Who Endures',...fetchlands].some(name=>action.label.includes(`[${name}]`)))return landCount<3?115:85;
-      if(action.label.includes(`[${U}]`))return hand.includes(U)?95:112;
-      if(dorks.some(name=>action.label.includes(`[${name}]`)))return 90;
-    }
-    if(cardName===T&&style==='recycle'&&action.label.includes(`[${W}]`))return 135;
-    return 70+moveValue(action,node);
-  }
+  if(kind==='choice')return 90;
   if(kind==='pass'){
     if(state.stack.length)return 200;
     return isMain?25:100;
@@ -210,6 +194,11 @@ function goldfishPriority(action,node,style) {
   }
   if(kind==='activate'&&fetchlands.includes(cardName))return 84;
   if(kind==='cast'){
+    if(style==='develop'){
+      const cost=Array.from(action.manaCost?.matchAll(/\{([^}]+)\}/g)||[],([,symbol])=>symbol==='X'?Math.max(0,action.x||0):Number(symbol)||1)
+        .reduce((sum,amount)=>sum+amount,0);
+      if(cost<=2)return 111-cost;
+    }
     if(cardName==='Once Upon a Time')return 100;
     if(cardName===H)return 105;
     if(cardName===N)return hand.includes(H)?50:101;
@@ -239,6 +228,7 @@ function goldfishPriority(action,node,style) {
     return 4;
   }
   if(kind==='activate'){
+    if(paysWithTarget(action))return 2;
     const refs=(action.targets||[]).flat();
     const tapped=board.find(c=>c.tapped&&refs.includes(`c:${c.id}`));
     if(searchingResets&&tapped&&floating<threshold&&[R,W,K].includes(cardName)&&action.costCard!==tapped.id){
@@ -253,24 +243,6 @@ function goldfishPriority(action,node,style) {
     if(cardName===Y&&own.graveyard.some(c=>c.name===C&&refs.includes(`c:${c.id}`)))return 82;
   }
   return 12;
-}
-
-function scenarioGuide(f) {
-  const move=(kind,name,cost)=>(a)=>a.kind===kind&&a.cardName===name&&(!cost||a.costName===cost);
-  const pick=(source,name)=>a=>a.kind==='choice'&&a.cardName===source&&a.label.includes(`[${name}]`);
-  const untap=(source,name,cost)=>(a,node)=>move('activate',source,cost)(a)&&
-    (a.targets||[]).flat().some(id=>node.state.players[1].battlefield.some(c=>c.name===name&&id===`c:${c.id}`));
-  if(f.lands===0 && f.grave?.includes(C) && f.hand.includes(N) && f.board.some(card=>card.split('|')[0]===Y)){
-    const recover=(a,node)=>move('activate',Y)(a)&&
-      (a.targets||[]).flat().some(id=>node.state.players[1].graveyard.some(c=>c.name===C&&id===`c:${c.id}`));
-    return {name:'Marwyn 回收 Cradle',steps:[recover,move('play_land',C),move('mana',C),move('cast',N,W),pick(N,H)]};
-  }
-  const dork=f.board.find(name=>dorks.includes(name));
-  if (f.turn!==2 || f.lands!==0 || !dork || !f.board.includes(F) || f.board.length!==2 ||
-      f.oppHand?.length || f.oppBoard?.length || ![C,U,N,R,W].every(name=>f.hand.includes(name)) || f.hand.filter(name=>name===W).length<2) return null;
-  return {name:'T2-Cub–Cradle',steps:[move('play_land',C),move('mana',F),move('mana',dork),move('cast',U),pick(U,C),move('mana',C),
-    move('cast',R),move('cast',W),move('cast',W),untap(R,C,F),move('mana',C),untap(W,C,R),move('cast',R),
-    untap(W,dork,R),move('cast',N,W),pick(N,H)]};
 }
 
 function mechanics(path) {
@@ -292,7 +264,10 @@ function mechanics(path) {
 async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1}={}) {
   const root = makeRoot(f,orderSeed);
   const started = performance.now();
-  const options = {root,exhaustive:true,skipForcedPasses:true,enumerateChoices:true};
+  const baseTurn=f.turn||3;
+  const horizon=f.horizon||0;
+  const lastTurn=baseTurn+horizon;
+  const options = {root,exhaustive:true,skipForcedPasses:true,enumerateChoices:true,lastSearchTurn:lastTurn};
   const stats = {expanded:0, leaves:0, errors:{}, gaps:new Set()};
   const nodes = new Map();
   const key = p => p.map(a => a.key).join('\n');
@@ -311,52 +286,42 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
   let winner = null;
   let explicitWinner = null;
   let bestDamage = null;
-  let guidedPath = null;
+  let workLimit=f.budget;
   const samples = [];
-  const baseTurn = f.turn || 3;
-  const horizon = f.horizon || 0;
-  const lastTurn = baseTurn+horizon;
   let minOpponentLife = f.life || 20;
   const queue = [{node:initial,p:[],value:0}];
   const processed=new Set();
+  const queuedStates=new Set();
   const childrenByAction = new Map();
   const winsByMechanics = new Map();
   const investment = x => x.path.reduce((mana,a)=>mana+Math.max(0,a.x||0),0);
-  const lateCub = x => x.path.reduce((late,a,i)=>late+Number(a.kind==='cast'&&a.cardName===U&&nodes.get(key(x.path.slice(0,i)))?.state.phase==='MAIN2'),0);
-  const bentCradle = x=>x.path.some(a=>a.kind==='choice'&&a.cardName===U&&a.label.includes(`[${C}]`));
-  function cradleTapsBeforeEarthbend(path) {
-    const taps=new Map();
-    let count=0;
-    for (const [index,action] of path.entries()) {
-      if(action.kind==='mana'&&action.cardName===C){
-        const before=nodes.get(key(path.slice(0,index)))?.state;
-        const card=before?.players[1].battlefield.find(c=>c.id===action.cardId);
-        if(card&&!card.types.includes('Creature')){
-          const id=`${before.turnNumber}/${card.id}`;
-          taps.set(id,(taps.get(id)||0)+1);
-        }
-      }else if(action.kind==='choice'&&action.cardName===U&&action.label.includes(`[${C}]`)){
-        const target=action.key.match(/:\[(\d+)\]$/)?.[1];
-        const turn=nodes.get(key(path.slice(0,index)))?.state.turnNumber;
-        const id=`${turn}/${target}`;
-        count+=taps.get(id)||0;
-        taps.delete(id);
-      }
-    }
-    return count;
+  const decisions=p=>p.reduce((count,action)=>count+Number(action.kind!=='pass'),0);
+  const compareWins=(a,b)=>a.state.turn-b.state.turn||decisions(a.path)-decisions(b.path)||
+    a.path.length-b.path.length||investment(a)-investment(b);
+  function positionValue(node){
+    const own=node.state.players[1];
+    const mana=Math.min(10,Object.values(own.manaPool).reduce((sum,amount)=>sum+amount,0));
+    const creatures=own.battlefield.filter(card=>card.types.includes('Creature'));
+    const attackPower=creatures.filter(card=>!card.tapped&&!card.hasSummoningSickness).reduce((sum,card)=>sum+Math.max(0,card.power),0);
+    const damage=(f.life||20)-node.state.players[0].life;
+    return Math.min(35,attackPower)*2+own.battlefield.length*3+own.hand.length+mana*2+damage*2;
   }
-  const compareWins = (a,b) => a.state.turn-b.state.turn || lateCub(a)-lateCub(b) ||
-    Number(bentCradle(b))-Number(bentCradle(a)) || a.earlyCradleTaps-b.earlyCradleTaps ||
-    a.path.length-b.path.length || investment(a)-investment(b);
+  function enqueue(node,p,value) {
+    const {sequenceNumber,...state}=node.state;
+    const signature=JSON.stringify([state,node.actions.map(action=>action.key).sort()]);
+    const repeated=queuedStates.has(signature);
+    queuedStates.add(signature);
+    queue.push({node,p,value:value-(repeated?55:0)});
+  }
   function record(node,p,settled=false) {
     const state = summary(node);
     const result = {path:p,state,settled};
-    if (state.turn <= lastTurn || (state.turn === lastTurn+1 && state.phase === 'UNTAP')) {
+    if (state.turn <= lastTurn || node.stopReason==='search_horizon' || (state.turn === lastTurn+1 && state.phase === 'UNTAP')) {
       minOpponentLife = Math.min(minOpponentLife,state.opponent);
-      if (p.length && state.opponent < (f.life || 20) && (!bestDamage || state.opponent < bestDamage.state.opponent)) bestDamage=result;
+      if (state.opponent < (f.life || 20) && (!bestDamage || state.opponent < bestDamage.state.opponent)) bestDamage=result;
     }
     if (state.winner === '1' && state.turn <= lastTurn) {
-      result.earlyCradleTaps=cradleTapsBeforeEarthbend(p);
+      if(!winner&&f.ignoreOpponent&&horizon===0)workLimit=Math.min(workLimit,stats.expanded+180);
       if (!settled && (!explicitWinner || compareWins(result,explicitWinner)<0)) explicitWinner=result;
       if (!winner || compareWins(result,winner)<0) winner=result;
       if(!settled){
@@ -373,50 +338,46 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
     }
     if (samples.length < 14 && p.length && (settled || state.winner || state.opponent < (f.life || 20))) samples.push(result);
   }
-  const guide=scenarioGuide(f);
-  if (guide) {
-    let node=initial;
-    const p=[];
-    const advance=async action=>{p.push(action);node=await expand(p.slice());record(node,p.slice());};
-    try {
-      for (const pick of guide.steps) {
-        for (let i=0;i<7&&!node.actions.some(a=>pick(a,node))&&node.state.turnNumber===baseTurn;i++) {
-          const pass=node.actions.find(a=>a.kind==='pass');
-          if(!pass)break;
-          await advance(pass);
-        }
-        if (node.state.turnNumber!==baseTurn) break;
-        const action=node.actions.find(a=>pick(a,node));
-        if(!action)break;
-        await advance(action);
-      }
-      for (let i=0;i<16&&node.state.turnNumber===baseTurn&&node.state.status!=='COMPLETE';i++) {
-        const pass=node.actions.find(a=>a.kind==='pass');
-        if(!pass)break;
-        await advance(pass);
-      }
-      if (node.state.winnerId==='1') guidedPath=key(p);
-    } catch(e) {error(e);}
-  }
   if(f.ignoreOpponent){
     const probeLimit=Math.min(f.budget,stats.expanded+Math.floor(f.budget/2));
-    const probes=[['untap',-1],['recycle',-1],['develop',-1],['preserve',-1],['untap',0],['preserve',1]]
-      .filter((_,index)=>index%policyStride===policyOffset);
-    for(const [style,alternateAt] of probes){
+    const probes=['untap','recycle','develop','preserve','untap','preserve'];
+    for(const [index,style] of probes.entries()){
+      if(index%policyStride!==policyOffset)continue;
       let node=initial;
       const p=[];
-      while(stats.expanded<probeLimit&&p.length<f.depth&&node.state.turnNumber<=lastTurn&&node.state.status!=='COMPLETE'){
+      while(stats.expanded<Math.min(probeLimit,workLimit)&&node.state.turnNumber<=lastTurn&&node.state.status!=='COMPLETE'){
         signal?.throwIfAborted();
-        const moves=node.actions.map(action=>({action,rank:goldfishPriority(action,node,style)})).sort((a,b)=>b.rank-a.rank);
-        if(p.length===alternateAt&&moves.length>1)[moves[0],moves[1]]=[moves[1],moves[0]];
+        const allowed=decisions(p)<f.depth?node.actions:node.actions.filter(action=>action.kind==='pass');
+        const moves=allowed.map(action=>({action,rank:goldfishPriority(action,node,style)})).sort((a,b)=>b.rank-a.rank);
+        if(moves[0]?.action.kind==='choice'&&moves.length>1){
+          const selected=index%moves.length;
+          [moves[0],moves[selected]]=[moves[selected],moves[0]];
+          const choices=[];
+          for(const {action,rank} of moves){
+            if(stats.expanded>=Math.min(probeLimit,workLimit))break;
+            const next=[...p,action];
+            try{
+              const child=await expand(next);
+              record(child,next);
+              const value=positionValue(child);
+              enqueue(child,next,rank*0.4+value);
+              choices.push({action,child,value});
+            }catch(e){error(e);}
+          }
+          choices.sort((a,b)=>b.value-a.value);
+          if(!choices.length)break;
+          node=choices[0].child;
+          p.push(choices[0].action);
+          continue;
+        }
         let advanced=false;
         for(const {action,rank} of moves){
-          if(stats.expanded>=probeLimit)break;
+          if(stats.expanded>=Math.min(probeLimit,workLimit))break;
           const next=[...p,action];
           try{
             const child=await expand(next);
             record(child,next);
-            queue.push({node:child,p:next,value:rank*0.55+Math.min(15,next.length)});
+            enqueue(child,next,rank*0.55+Math.min(15,next.length));
             node=child;p.push(action);advanced=true;break;
           }catch(e){error(e);}
         }
@@ -424,41 +385,40 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
       }
     }
   }
-  while (queue.length && stats.expanded + stats.leaves < f.budget) {
+  while (queue.length && stats.expanded + stats.leaves < workLimit) {
     signal?.throwIfAborted();
     queue.sort((a,b) => b.value-a.value || a.p.length-b.p.length);
-    const {node,p} = queue.shift();
-    const pathKey=key(p);
-    if(processed.has(pathKey))continue;
-    processed.add(pathKey);
-    record(node,p);
-    if (node.state.status === 'COMPLETE' || node.state.turnNumber > lastTurn || p.length >= f.depth) continue;
-    if (!f.ignoreOpponent && !horizon && explicitWinner && !f.oppHand?.length && !f.oppBoard?.length && p.length >= explicitWinner.path.length) continue;
-    if (!f.ignoreOpponent && !f.explicitOnly && p.length && !['pass','mana'].includes(p.at(-1).kind) && p.every(a => a.actorId === 1) && stats.leaves < Math.ceil(f.budget/6)) {
-      try {
-        stats.leaves++;
-        const leaf = await client.request({...options,command:'simulate',path:p,horizonTurns:horizon+1},{signal});
-        record(leaf,p,true);
-      } catch(e) {error(e);}
+    const entry=queue.shift();
+    const {node,p,value}=entry;
+    let actions=entry.actions;
+    if(!actions){
+      const pathKey=key(p);
+      if(processed.has(pathKey))continue;
+      processed.add(pathKey);
+      record(node,p);
+      if(node.state.status==='COMPLETE'||node.state.turnNumber>lastTurn)continue;
+      if(!f.ignoreOpponent&&!horizon&&explicitWinner&&!f.oppHand?.length&&!f.oppBoard?.length&&p.length>=explicitWinner.path.length)continue;
+      if(!f.ignoreOpponent&&!f.explicitOnly&&p.length&&!['pass','mana'].includes(p.at(-1).kind)&&p.every(a=>a.actorId===1)&&stats.leaves<Math.ceil(f.budget/6)){
+        try {
+          stats.leaves++;
+          const leaf=await client.request({...options,command:'simulate',path:p,horizonTurns:horizon+1},{signal});
+          record(leaf,p,true);
+        } catch(e) {error(e);}
+      }
+      const style=['untap','recycle','develop','preserve'][policyOffset];
+      const allowed=decisions(p)<f.depth?node.actions:node.actions.filter(action=>action.kind==='pass');
+      actions=allowed.map(action=>({action,priority:moveValue(action,node)+
+        (f.ignoreOpponent?goldfishPriority(action,node,style)*0.12:0)})).sort((a,b)=>b.priority-a.priority);
     }
-    const style=['untap','recycle','develop','preserve'][policyOffset];
-    const actions = node.actions.map(action => ({action,priority:moveValue(action,node)+
-      (f.ignoreOpponent&&policyStride>1?goldfishPriority(action,node,style)*0.12:0)})).sort((a,b) => b.priority-a.priority);
-    for (const {action,priority} of actions) {
-      if (stats.expanded+stats.leaves >= f.budget) break;
-      try {
-        const next = [...p,action];
-        const child = await expand(next);
-        record(child,next);
-        const own = child.state.players[1];
-        const hoof = own.battlefield.some(c => c.name === H) ? 38 : 0;
-        const impendingChoice = child.actions.some(a=>a.kind==='choice'&&a.label.includes(H)) ? 36 : 0;
-        const mana = Math.min(10,own.manaPool.G || 0);
-        const boardPower = own.battlefield.filter(c => !c.tapped && !c.hasSummoningSickness).reduce((n,c) => n+c.power,0);
-        const lostLife = (f.life || 20)-child.state.players[0].life;
-        queue.push({node:child,p:next,value:priority+hoof+impendingChoice+Math.min(boardPower,35)*1.4+lostLife*2+mana*1.2-next.length*2});
-      } catch(e) {error(e);}
-    }
+    if(!actions.length||stats.expanded+stats.leaves>=workLimit)continue;
+    const [{action,priority},...remaining]=actions;
+    if(remaining.length)queue.push({node,p,actions:remaining,value:value-2-(priority-remaining[0].priority)*0.4});
+    try {
+      const next=[...p,action];
+      const child=await expand(next);
+      record(child,next);
+      enqueue(child,next,priority+positionValue(child)-next.length);
+    } catch(e) {error(e);}
   }
   const proofCache=new Map();
   function backedWin(p) {
@@ -467,7 +427,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
     const node=nodes.get(id);
     if(!node || node.state.turnNumber>lastTurn)return null;
     let result=null;
-    if(node.state.winnerId==='1')result={path:p,state:summary(node),settled:false,earlyCradleTaps:cradleTapsBeforeEarthbend(p)};
+    if(node.state.winnerId==='1')result={path:p,state:summary(node),settled:false};
     else if(node.actions.length){
       const children=node.actions.map(a=>backedWin([...p,a]));
       const opponent=node.actions[0].actorId===0;
@@ -479,9 +439,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
   const backed=backedWin([]);
   winner = backed || explicitWinner || winner;
   if(winner){
-    winner.guide=key(winner.path)===guidedPath?guide.name:null;
     winner.mechanics=mechanics(winner.path);
-    winner.lateCub=lateCub(winner);
   }
   async function replay(line,winning) {
     const proof = await client.request({...options,command:line.settled?'simulate':'expand',path:line.path,horizonTurns:horizon+1,includeTrace:true},{signal});
@@ -512,7 +470,7 @@ async function search(client, f, {signal,orderSeed,policyOffset=0,policyStride=1
   if(winner&&f.ignoreOpponent){
     const others=[...winsByMechanics.values()].filter(x=>x.mechanics.join('|')!==winner.mechanics.join('|')).sort(compareWins);
     for(const other of others.slice(0,4)){
-      try{verifiedAlternatives.push({winner:{...other,lateCub:lateCub(other)},trace:await replay(other,true)});}
+      try{verifiedAlternatives.push({winner:other,trace:await replay(other,true)});}
       catch(e){error(e);}
     }
   }
