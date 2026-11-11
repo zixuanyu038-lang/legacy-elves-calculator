@@ -19,6 +19,20 @@
           <h2>当前局面</h2>
           <label class="sample">载入示例 <select id="examples"><option value="">选择场景</option></select></label>
         </div>
+        <div class="deck-box">
+          <label for="deck-select">己方套牌</label>
+          <select id="deck-select"><option value="">内置薪传妖精</option></select>
+          <details id="deck-import">
+            <summary>添加套牌</summary>
+            <div class="deck-fields">
+              <label>套牌名称 <span>选填</span><input id="deck-name" type="text" maxlength="60" autocomplete="off"></label>
+              <label>英文牌表<textarea id="deck-text" rows="7" spellcheck="false" placeholder="4 Llanowar Elves&#10;4 Elvish Mystic&#10;…&#10;&#10;Sideboard&#10;2 Force of Vigor"></textarea></label>
+              <p class="help">每行填数量和英文牌名。主牌 60–120 张，备牌最多 15 张。主牌至少 12 张妖精生物，且妖精占生物至少一半。</p>
+              <button type="button" id="deck-save">校验并添加</button>
+              <p id="deck-status" role="status" hidden></p>
+            </div>
+          </details>
+        </div>
         <p class="help">每行一张英文牌名，重复可写 <code>2 Forest</code>。战场示例 <code>Gaea's Cradle | 横置 | 地御:1</code>。新生物可标 <code>| 失调</code>，本回合已启动的 Ranger 或 Symbiote 可标 <code>| 已用</code>。</p>
         <div class="grid">
           <label>己方手牌<textarea id="hand" rows="5" spellcheck="false"></textarea></label>

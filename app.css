@@ -21,14 +21,23 @@ code,textarea{font-family:"IBM Plex Mono",Consolas,"Microsoft YaHei",monospace}
 .fields{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:13px}
 .extras{margin:12px 0 0}
 textarea,input,select,button{font-size:inherit}
-textarea,input[type="number"],select{border:1px solid var(--border);border-radius:7px;background:#fbfcfa;color:#172620;padding:8px 9px}
-textarea,input[type="number"],.fields select{display:block;width:100%;margin-top:5px}
+textarea,input[type="number"],input[type="text"],select{border:1px solid var(--border);border-radius:7px;background:#fbfcfa;color:#172620;padding:8px 9px}
+textarea,input[type="number"],input[type="text"],.fields select{display:block;width:100%;margin-top:5px}
 textarea{resize:vertical;line-height:1.5}
 textarea:focus,input:focus,select:focus,button:focus-visible{outline:2px solid #49886a;outline-offset:2px}
 .check{display:flex;gap:8px;align-items:center;margin:7px 0 14px}
 input[type="checkbox"]{accent-color:var(--green)}
 details{border-top:1px solid var(--border);padding:12px 0}
 summary{cursor:pointer;font-size:14px;font-weight:600}
+.deck-box{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:#fbfcfa}
+#deck-select{width:100%;min-width:0}
+#deck-import{grid-column:1/-1;padding:8px 0 0}
+#deck-import summary{white-space:nowrap;color:var(--green)}
+.deck-fields{display:grid;gap:9px;padding:9px 0 2px}
+.deck-fields .help{margin:0}
+#deck-save{justify-self:start}
+#deck-status{color:var(--muted);font-size:13px}
+#deck-status[data-error="true"]{color:#a12727}
 button{border:1px solid transparent;border-radius:8px;background:var(--green);color:white;padding:9px 14px;font-weight:650;cursor:pointer}
 button:disabled{opacity:.6;cursor:wait}
 .actions{justify-content:flex-start;margin-top:8px}

@@ -3,18 +3,34 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {ElvesForgeClient} = require('./forge-adapter.cjs');
 const {search,fixtures,main,side} = require('./search.cjs');
+const {parseDeck,validateDeck} = require('./decks.cjs');
 
 const port = Number(process.env.ELVES_PORT || 8794);
 const host = `127.0.0.1:${port}`;
 let clients=[];
-function createWorkers(){
-  return Array.from({length:4},()=>new ElvesForgeClient({dataDir:path.join(__dirname,'.forge'),javaHeap:'2g',activeProcessors:3,timeoutMs:45000}));
+function createWorker(){
+  return new ElvesForgeClient({dataDir:path.join(__dirname,'.forge'),javaHeap:'2g',activeProcessors:3,timeoutMs:45000});
 }
 const demos = Object.fromEntries(['opening-cub-hoof','ranger-zenith-20','double-untap-hoof','hoof-clean','hoof-blockers','hoof-force','hoof-swords','shepherd','zenith-top-end','marwyn-recover','vibrance-cradle','cub-sprint','progenitus-blockers']
   .map(id=>[id,fixtures.find(f=>f.id===id)]));
-const names = new Map([...main,...side].map(c=>[c.name.toLowerCase(),c.name]));
+const defaultDeck={main,side};
+const validatedDecks=new Map();
 
-function lines(value,field,{own=true,flags=false,max=40}={}) {
+async function getDeck(text,signal) {
+  const parsed=parseDeck(text);
+  const key=text.trim();
+  if (validatedDecks.has(key)) return validatedDecks.get(key);
+  if (!clients.length) clients.push(createWorker());
+  const names=[...new Set([...parsed.main.keys(),...parsed.side.keys()])];
+  const catalog=await clients[0].request({command:'catalog',names},{signal});
+  const deck=validateDeck(parsed,catalog.cards);
+  if (validatedDecks.size>=12) validatedDecks.delete(validatedDecks.keys().next().value);
+  validatedDecks.set(deck.text,deck);
+  return deck;
+}
+
+function lines(value,field,{names,flags=false,max=40}={}) {
+  const own=!!names;
   if (typeof value !== 'string') throw Error(`${field}格式错误。`);
   const result=[];
   for (const raw of value.split(/\r?\n/)) {
@@ -24,7 +40,7 @@ function lines(value,field,{own=true,flags=false,max=40}={}) {
     const [nameText,...tokens]=body.split('|').map(x=>x.trim());
     const name=own ? names.get(nameText.toLowerCase()) : nameText;
     const count=Number(quantity || 1);
-    if (!name) throw Error(`${field}里的 ${nameText} 不在新版牌表。`);
+    if (!name) throw Error(`${field}里的 ${nameText} 不在所选套牌中。`);
     if (!count || count>20 || result.length+count>max) throw Error(`${field}的张数超出范围。`);
     if (/[;\x00-\x1f]/.test(name)) throw Error(`${field}的牌名格式错误。`);
     const attrs=tokens.map(token=> {
@@ -50,35 +66,38 @@ function number(value,min,max,field) {
   return value;
 }
 
-function requestFixture(body) {
+function requestFixture(body,deck) {
   const includeOpponent=body.includeOpponent===true;
+  const names=new Map([...deck.main,...deck.side].map(card=>[card.name.toLowerCase(),card.name]));
+  const ownLines=(value,field,flags=false)=>lines(value,field,{names,flags});
   const input={id:'calculator',manualMana:true,ignoreOpponent:!includeOpponent,explicitOnly:true,
-    board:lines(body.board,'己方战场',{flags:true}),hand:lines(body.hand,'己方手牌'),
-    oppBoard:includeOpponent?lines(body.oppBoard,'对手战场',{own:false,flags:true}):[],
-    oppHand:includeOpponent?lines(body.oppHand,'对手手牌',{own:false}):[],
-    grave:lines(body.grave,'己方坟场'),exile:lines(body.exile,'己方放逐区'),top:lines(body.top,'己方已知库顶'),
-    cuts:lines(body.cuts,'换出'),adds:lines(body.adds,'换入'),
+    board:ownLines(body.board,'己方战场',true),hand:ownLines(body.hand,'己方手牌'),
+    oppBoard:includeOpponent?lines(body.oppBoard,'对手战场',{flags:true}):[],
+    oppHand:includeOpponent?lines(body.oppHand,'对手手牌'):[],
+    grave:ownLines(body.grave,'己方坟场'),exile:ownLines(body.exile,'己方放逐区'),top:ownLines(body.top,'己方已知库顶'),
+    cuts:ownLines(body.cuts,'换出'),adds:ownLines(body.adds,'换入'),
     life:number(body.life,1,200,'对手生命'),ownLife:number(body.ownLife,1,200,'己方生命'),
     turn:number(body.turn,1,100,'回合'),lands:body.landAvailable===true?0:1,
     green:number(body.green,0,200,'浮绿'),horizon:number(body.horizon,0,8,'后续回合'),noSpells:body.noSpells===true,
     depth:number(body.depth,6,32,'搜索深度'),budget:number(body.budget,80,3600,'搜索预算')};
   if (input.cuts.length!==input.adds.length) throw Error('换入与换出须同张数。');
-  const sideCounts=Object.fromEntries(side.map(c=>[c.name,c.count]));
+  const sideCounts=Object.fromEntries(deck.side.map(c=>[c.name,c.count]));
   for (const card of new Set(input.adds)) {
     if (!sideCounts[card] || input.adds.filter(x=>x===card).length>sideCounts[card]) throw Error(`备牌里没有足够的 ${card}。`);
   }
-  const deck=Object.fromEntries(main.map(c=>[c.name,c.count]));
+  const counts=Object.fromEntries(deck.main.map(c=>[c.name,c.count]));
   for (const name of input.cuts) {
-    if (!deck[name]) throw Error(`无法从主牌换出 ${name}。`);
-    deck[name]--;
+    if (!counts[name]) throw Error(`无法从主牌换出 ${name}。`);
+    counts[name]--;
   }
-  for (const name of input.adds) deck[name]=(deck[name]||0)+1;
+  for (const name of input.adds) counts[name]=(counts[name]||0)+1;
   for (const entry of [...input.board,...input.hand,...input.grave,...input.exile,...input.top]) {
     const name=entry.split('|')[0];
-    if (!deck[name]) throw Error(`场景里的 ${name} 超过当前牌表的份数，请核对所在区域和换备。`);
-    deck[name]--;
+    if (!counts[name]) throw Error(`场景里的 ${name} 超过当前牌表的份数，请核对所在区域和换备。`);
+    counts[name]--;
   }
   if (input.oppBoard.length+input.oppHand.length>=60) throw Error('对手手牌与战场合计需少于 60 张。');
+  if (deck!==defaultDeck) input.deck={main:deck.main,side:deck.side};
   return input;
 }
 
@@ -132,11 +151,12 @@ const server=http.createServer(async(req,res)=> {
     } catch(e) {return json(res,500,{error:e.message});}
   }
   if (req.method==='GET' && req.url==='/examples') return json(res,200,demos);
-  if (req.method!=='POST' || req.url!=='/search') return json(res,404,{error:'页面不存在。'});
+  const importing=req.url==='/decks/validate';
+  if (req.method!=='POST' || (!importing&&req.url!=='/search')) return json(res,404,{error:'页面不存在。'});
   if (req.headers.origin && req.headers.origin!==`http://${host}` || req.headers['content-type']!=='application/json') {
     return json(res,403,{error:'请从计算器页面提交。'});
   }
-  if (active) return json(res,429,{error:'已有计算在运行，结束或取消后再试。'});
+  if (active) return json(res,429,{error:'Forge 正在处理上一项任务，请稍后再试。'});
   active=true;
   const abort=new AbortController();
   const onClose=()=>{if(!res.writableEnded)abort.abort();};
@@ -150,10 +170,15 @@ const server=http.createServer(async(req,res)=> {
       if (raw.length>25000) throw Error('输入内容过长。');
     }
     const body=JSON.parse(raw);
+    if (importing) {
+      const {text,mainCount,sideCount,elfCount,creatureCount}=await getDeck(body.deck,abort.signal);
+      return json(res,200,{text,mainCount,sideCount,elfCount,creatureCount});
+    }
     const seed=number(body.seed,1,2147483647,'库序种子');
     const workers=number(body.workers??2,1,4,'并行进程');
-    const fixture=requestFixture(body);
-    clients=createWorkers();
+    const deck=body.deck==null?defaultDeck:await getDeck(body.deck,abort.signal);
+    const fixture=requestFixture(body,deck);
+    while (clients.length<4) clients.push(createWorker());
     const ask=[...new Set([...fixture.oppBoard.map(s=>s.split('|')[0]),...fixture.oppHand])];
     if (ask.length) {
       const cards=await clients[0].request({command:'catalog',names:ask},{signal:abort.signal});

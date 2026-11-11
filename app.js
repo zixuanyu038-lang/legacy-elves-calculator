@@ -10,6 +10,60 @@ const labels={
   'vibrance-cradle':'Vibrance 呼魂找 Cradle','cub-sprint':'T2 地御 Cradle 斩杀','progenitus-blockers':'换备后用 Progenitus 穿过阻挡'
 };
 let demos={},request,lastResult;
+let importingDeck=false;
+const deckStorageKey='legacy-elves-decks';
+const savedDecks=new Map();
+const deckSelect=byId('deck-select');
+
+function addDeckOption(deck) {
+  savedDecks.set(deck.id,deck);
+  deckSelect.add(new Option(`${deck.name} · ${deck.mainCount} 张`,deck.id));
+}
+
+function restoreDecks() {
+  try {
+    const stored=JSON.parse(localStorage.getItem(deckStorageKey)||'{}');
+    for (const deck of stored.decks||[]) {
+      if (typeof deck?.id==='string'&&deck.id&&typeof deck.name==='string'&&typeof deck.text==='string') addDeckOption(deck);
+    }
+    if (savedDecks.has(stored.selected)) deckSelect.value=stored.selected;
+  } catch {}
+}
+
+function saveDecks() {
+  try {
+    localStorage.setItem(deckStorageKey,JSON.stringify({decks:[...savedDecks.values()],selected:deckSelect.value}));
+    return true;
+  } catch { return false; }
+}
+
+function clearResult(message) {
+  byId('result').hidden=true;
+  byId('status').hidden=false;
+  byId('status').textContent=message;
+}
+
+function changeDeck() {
+  if (deckSelect.value&&byId('examples').value) {
+    byId('examples').value='';
+    load({});
+  }
+  const deck=savedDecks.get(deckSelect.value);
+  clearResult(deck?`当前使用 ${deck.name}。请填写局面后搜索。`:'当前使用内置薪传妖精套牌。');
+  return saveDecks();
+}
+
+function deckStatus(message,error=false) {
+  const status=byId('deck-status');
+  status.hidden=false;
+  status.textContent=message;
+  status.dataset.error=String(error);
+}
+
+function updateBusyControls() {
+  const busy=!!request||importingDeck;
+  for (const id of ['run','deck-save','deck-select','examples']) byId(id).disabled=busy;
+}
 
 function updateOpponentMode() {
   const enabled=byId('includeOpponent').checked;
@@ -138,7 +192,51 @@ function renderTrace(trace,fixture){
 
 function phaseName(phase){return ({MAIN1:'战斗前主阶段',COMBAT_BEGIN:'战斗开始',COMBAT_DECLARE_ATTACKERS:'宣告攻击',COMBAT_DECLARE_BLOCKERS:'宣告阻挡',COMBAT_DAMAGE:'战斗伤害',MAIN2:'战斗后主阶段',END_OF_TURN:'结束步骤'})[phase]||phase;}
 
-byId('examples').addEventListener('change',e=>{if (demos[e.target.value]) load(demos[e.target.value]);});
+restoreDecks();
+deckSelect.addEventListener('change',changeDeck);
+byId('deck-save').addEventListener('click',async()=>{
+  if (importingDeck||request) return;
+  const text=byId('deck-text').value.trim();
+  if (!text) {
+    deckStatus('请先粘贴英文牌表。',true);
+    byId('deck-text').focus();
+    return;
+  }
+  importingDeck=true;
+  updateBusyControls();
+  deckStatus('Forge 正在校验牌表…');
+  try {
+    const response=await fetch('/decks/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deck:text})});
+    const result=await response.json();
+    if (!response.ok) throw Error(result.error);
+    const name=byId('deck-name').value.trim()||`自定义妖精 ${savedDecks.size+1}`;
+    const existing=[...savedDecks.values()].find(deck=>deck.name===name&&deck.text===result.text);
+    const deck=existing||{...result,name,id:crypto.randomUUID()};
+    if (!existing) addDeckOption(deck);
+    deckSelect.value=deck.id;
+    const saved=changeDeck();
+    byId('deck-name').value='';
+    byId('deck-text').value='';
+    const summary=`已选用 ${name}。主牌 ${result.mainCount} 张，备牌 ${result.sideCount} 张，主牌妖精 ${result.elfCount} 张。`;
+    deckStatus(saved?summary:`${summary} 当前浏览器未能保存牌表，刷新后需要重新添加。`,!saved);
+  } catch (error) {
+    deckStatus(error.message,true);
+  } finally {
+    importingDeck=false;
+    updateBusyControls();
+  }
+});
+byId('examples').addEventListener('change',e=>{
+  const demo=demos[e.target.value];
+  if (!demo) return;
+  deckSelect.value='';
+  saveDecks();
+  load(demo);
+  clearResult('示例已载入，点击「搜索赢法」。');
+});
+byId('position').addEventListener('input',e=>{
+  if (fields.includes(e.target.id)) byId('examples').value='';
+});
 byId('includeOpponent').addEventListener('change',updateOpponentMode);
 byId('cancel').addEventListener('click',()=>request?.abort());
 byId('download').addEventListener('click',()=>{
@@ -149,13 +247,16 @@ byId('download').addEventListener('click',()=>{
 });
 byId('position').addEventListener('submit',async e=>{
   e.preventDefault();
-  if (request) return;
+  if (request||importingDeck) return;
   request=new AbortController();
   const payload=Object.fromEntries([...fields.map(id=>[id,byId(id).value]),...numeric.map(id=>[id,Number(byId(id).value)])]);
   payload.landAvailable=byId('landAvailable').checked;
   payload.noSpells=byId('noSpells').checked;
   payload.includeOpponent=byId('includeOpponent').checked;
-  byId('run').disabled=true;byId('cancel').hidden=false;byId('result').hidden=true;
+  const deck=savedDecks.get(deckSelect.value);
+  if (deck) payload.deck=deck.text;
+  updateBusyControls();
+  byId('cancel').hidden=false;byId('result').hidden=true;
   byId('status').hidden=false;byId('status').textContent='Forge 正在搜索候选路线…';
   try {
     const response=await fetch('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:request.signal});
@@ -165,12 +266,16 @@ byId('position').addEventListener('submit',async e=>{
   } catch(error) {
     byId('status').textContent=error.name==='AbortError'?'已取消计算。':error.message;
   } finally {
-    request=null;byId('run').disabled=false;byId('cancel').hidden=true;
+    request=null;updateBusyControls();byId('cancel').hidden=true;
   }
 });
 
 fetch('/examples').then(r=>r.json()).then(examples=>{
   demos=examples;
   for(const [id,label] of Object.entries(labels)) byId('examples').add(new Option(label,id));
-  byId('examples').value='hoof-clean';load(demos['hoof-clean']);
+  if (deckSelect.value) changeDeck();
+  else if (!fields.some(id=>byId(id).value)) {
+    byId('examples').value='hoof-clean';
+    load(demos['hoof-clean']);
+  }
 }).catch(()=>{byId('status').textContent='无法读取示例。请检查计算器服务。';});

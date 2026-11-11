@@ -69,13 +69,17 @@ function makeRoot(f, orderSeed=2488) {
     const [name, ...flags] = card.split('|');
     return [name, `Id:${base+i}`, ...flags].join('|');
   }).join(';');
-  const deck = elfDeck.slice();
+  const deck = f.deck ? f.deck.main.flatMap(({name,count})=>Array(count).fill(name)) : elfDeck.slice();
+  const sideboard=f.deck?.side??side;
   for (const card of f.cuts || []) {
     const i=deck.indexOf(card);
     if (i < 0) throw Error(`Cannot side out ${card}`);
     deck.splice(i,1);
   }
-  for (const {name,count} of side) if ((f.adds||[]).filter(x=>x===name).length>count) throw Error(`Too many sideboard copies of ${name}`);
+  for (const name of new Set(f.adds||[])) {
+    const available=sideboard.find(card=>card.name===name)?.count||0;
+    if (f.adds.filter(card=>card===name).length>available) throw Error(`Too many sideboard copies of ${name}`);
+  }
   deck.push(...(f.adds || []));
   const remaining = deck.slice();
   for (const card of [...f.board, ...f.hand, ...(f.grave || []), ...(f.exile || []), ...(f.top || [])]) {
@@ -92,21 +96,32 @@ function makeRoot(f, orderSeed=2488) {
   const oppBoard = f.ignoreOpponent ? [] : f.oppBoard || [];
   const oppHand = f.ignoreOpponent ? [] : f.oppHand || [];
   const oppLibrary = Array(60-oppBoard.length-oppHand.length).fill('Island');
+  let nextId=100;
+  function zoneBase(preferred,size) {
+    const base=Math.max(preferred,nextId);
+    nextId=base+size;
+    return base;
+  }
+  const library=[...(f.top||[]),...remaining];
+  const handBase=zoneBase(100,f.hand.length), boardBase=zoneBase(120,f.board.length);
+  const graveBase=zoneBase(150,f.grave?.length||0), libraryBase=zoneBase(180,library.length);
+  const oppHandBase=zoneBase(300,oppHand.length), oppBoardBase=zoneBase(320,oppBoard.length);
+  const oppLibraryBase=zoneBase(350,oppLibrary.length), exileBase=zoneBase(410,f.exile?.length||0);
   const earthbend = f.board.flatMap((card,i)=> {
     const match=card.match(/\|Earthbend:(\d+)(?=\||$)/);
-    return match ? [{id:120+i,counters:Number(match[1])}] : [];
+    return match ? [{id:boardBase+i,counters:Number(match[1])}] : [];
   });
-  const usedUntaps=f.board.flatMap((card,i)=>card.split('|').includes('UntapUsed')?[120+i]:[]);
+  const usedUntaps=f.board.flatMap((card,i)=>card.split('|').includes('UntapUsed')?[boardBase+i]:[]);
   return {seed:orderSeed, manualMana:!!f.manualMana, ignoreOpponent:!!f.ignoreOpponent, earthbend, usedUntaps, viewerId:1, names:['Opponent','Elves'],gameId:f.id,
     activePlayerId:1, priorityPlayerId:1, firstPriorityId:1, history:[{}, {spellsCastThisGame:(f.noSpells ?? ((f.turn || 3)===1)) ? 0 : 1}],
-    decks:[{main:counts([...oppBoard.map(c=>c.split('|')[0]),...oppHand,...oppLibrary])},{main:counts(deck),sideboard:side}],
+    decks:[{main:counts([...oppBoard.map(c=>c.split('|')[0]),...oppHand,...oppLibrary])},{main:counts(deck),sideboard}],
     stateText:[`turn=${f.turn || 3}`,'activeplayer=p1','activephase=MAIN1',
       `p0life=${f.life || 20}`,`p1life=${f.ownLife || 20}`,`p1landsplayed=${f.lands ?? 1}`,
       `p1manapool=${Array(f.green || 0).fill('G').join(' ')}`,
-      `p1hand=${serialize(f.hand,100)}`,`p1battlefield=${serialize(f.board.map(c=>c.replace(/\|(?:Earthbend:\d+|UntapUsed)(?=\||$)/g,'')),120)}`,
-      `p1graveyard=${serialize(f.grave || [],150)}`,`p1exile=${serialize(f.exile || [],410)}`,`p1library=${serialize([...(f.top || []),...remaining],180)}`,
-      `p0hand=${serialize(oppHand,300)}`,`p0battlefield=${serialize(oppBoard,320)}`,
-      `p0library=${serialize(oppLibrary,350)}`].join('\n')+'\n'};
+      `p1hand=${serialize(f.hand,handBase)}`,`p1battlefield=${serialize(f.board.map(c=>c.replace(/\|(?:Earthbend:\d+|UntapUsed)(?=\||$)/g,'')),boardBase)}`,
+      `p1graveyard=${serialize(f.grave||[],graveBase)}`,`p1exile=${serialize(f.exile||[],exileBase)}`,`p1library=${serialize(library,libraryBase)}`,
+      `p0hand=${serialize(oppHand,oppHandBase)}`,`p0battlefield=${serialize(oppBoard,oppBoardBase)}`,
+      `p0library=${serialize(oppLibrary,oppLibraryBase)}`].join('\n')+'\n'};
 }
 
 function summary(node) {

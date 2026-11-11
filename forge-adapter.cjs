@@ -14,6 +14,11 @@ function extend(source) {
     if (!source.includes(before)) throw Error('Studio Forge adapter changed: '+before);
     source = source.replace(before,after);
   }
+  replace('card.addProperty("oracleText",rules.getOracleText());', `
+            var type=rules.getType();
+            card.addProperty("creature",type.isCreature());
+            card.addProperty("elfCreature",type.isCreature()&&(type.hasCreatureType("Elf")||rules.hasStartOfKeyword("Changeling",rules.getMainPart())));
+            card.addProperty("oracleText",rules.getOracleText());`);
   replace('if(ability!=null&&ability.getHostCard().getName().equals("Atraxa, Grand Unifier")){',
     'if(ability!=null&&List.of("Atraxa, Grand Unifier","Eladamri, Korvecdal","Temur Sabertooth","Formidable Speaker","Once Upon a Time").contains(ability.getHostCard().getName())){');
   replace('if(destination==ZoneType.Battlefield&&origin.contains(ZoneType.Hand)&&', `
