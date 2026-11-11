@@ -1,35 +1,50 @@
 # 薪传 Elves 斩杀计算器
 
-输入己方手牌、战场与目标血量，从己方战斗前主阶段的空堆叠开始。计算器用 Forge 枚举合法动作、搜索赢法，并重放找到的路线。页面会显示牌张选择、法术力支付、重置目标和战斗伤害。
+填入手牌、战场和对手血量，计算器从己方战斗前主阶段的空堆叠开始，用 Forge 搜索合法操作。找到赢法后会重放路线，列出法术力从哪来、异能重置了谁、找了哪张牌，以及每只攻击生物打了多少。
 
-使用 [Deck - Elves.txt](Deck%20-%20Elves.txt) 里的固定牌表。可以填入指定的对手手牌、阻挡者和互动牌，也可以关闭对手，单独练习产费和斩杀。
+**[下载带卡图的斩杀手册（Word）](docs/legacy-elves-combo-handbook.docx?raw=1)** · [查看 60＋15 牌表](Deck%20-%20Elves.txt) · [看视频拍摄脚本](VIDEO.md)
+
+手册包括单卡分析和八组组合，涵盖 Cub 地御苗地、Ranger 与共生虫连续重置、剑齿虎循环产费，以及 Order、绿阳和 Hoof 的斩杀路线。
 
 ## Windows 启动
 
-1. 使用 Windows x64 和 Node.js 20 或更新版本。克隆仓库或下载 ZIP 解压。
-2. 双击 **安装Forge.cmd**。首次下载约 488 MB，分别是 Forge 2.0.15 和 Temurin JDK 17 的官方归档。安装脚本会核对 SHA-256，并解压到当前用户的本地应用数据目录。已经装过同版本 Studio 便携运行时，可以直接开始下一步。
+1. 准备 Windows x64 和 Node.js 20 或更新版本。克隆仓库，或从 GitHub 的 **Code → Download ZIP** 下载并解压。
+2. 双击 **安装Forge.cmd**。首次下载约 488 MB，包括 Forge 2.0.15 和 Temurin JDK 17。脚本会核对 SHA-256，再解压到本地应用数据目录。已有同版本 Studio 便携运行时可直接开始下一步。
 3. 双击 **启动计算器.cmd**，或在仓库目录执行 `node calculator.cjs`。
-4. 打开 [本机计算器](http://127.0.0.1:8794/)。第一次可载入「T2 地御 Cradle 斩杀」，点击「搜索赢法」。
+4. 浏览器打开 `http://127.0.0.1:8794/`。在「载入示例」中选「T2 地御 Cradle 斩杀」，点「搜索赢法」。
 
-端口冲突时，可在 PowerShell 运行
+端口被占用时，可在 PowerShell 里改用 `8795`，然后用浏览器打开 `http://127.0.0.1:8795/`。
 
 ```powershell
 $env:ELVES_PORT = '8795'
 node calculator.cjs
 ```
 
-此时浏览器地址为 `http://127.0.0.1:8795/`。如果手动给安装脚本指定了 `-RuntimeDir`，启动前把 `ENDSTEP_FORGE_RUNTIME` 设为相同目录。
+如果安装 Forge 时通过 `-RuntimeDir` 指定了运行时目录，启动前把 `ENDSTEP_FORGE_RUNTIME` 设为同一个目录。
 
-## 怎么读结果
+## 跑一遍实测局面
 
-- **当回合斩杀**或**后续回合赢法**表示 Forge 重放了该路线并判定己方获胜。未来摸牌取决于固定库序。示例中的组合公式也会引导部分分支的展开。
-- **本轮未找到斩杀**时，页面显示搜索中对手到过的最低血量。有压血路线时，会重放并列出步骤。该路线按对手血量挑选。
-- **加入对手**会按填入的手牌和战场计算。对手手牌仍按指定牌张处理，战斗声明由 Forge 策略执行。
+在「搜索范围」中设预算 **420 次**、库序种子 **2488**、**1 个进程**，关闭「加入对手」。T2 示例的搜索深度设为 **16**，Natural Order 示例设为 **32**。
 
-牌名用英文，每行一张。同名牌可写 `2 Forest`。战场状态可写成 `Gaea's Cradle | 地御:1`、`Llanowar Elves | 失调` 或 `Quirion Ranger | 已用`。页面可下载当前结果的 JSON 搜索日志。
+| 示例 | 目标和搜索范围 | Forge 重放结果 |
+|---|---|---|
+| T2 地御 Cradle 斩杀 | 20 血，当回合斩杀 | 苗地、Llanowar Elves、Hoof 各打 6、6、10，共 22 点 |
+| Natural Order 斩杀 | 20 血，当回合斩杀 | Order 找 Hoof，战斗打 24 点 |
+| Natural Order 斩杀 | 25 血，当回合斩杀 | 打到 1 血，页面显示「本轮未找到斩杀」并列出操作 |
+| Natural Order 斩杀 | 25 血，再搜一个己方回合 | T3 打到 1 血，T4 摸到 Cub、地御苗地，再打 9 点 |
 
-## 复现
+录制时可以按 [视频拍摄脚本](VIDEO.md) 的镜头顺序，逐步展示重置目标和伤害。想逐条校验手册里的核心互动，可运行 `node crosscheck.cjs`，复现 13 项 Forge 检查。
 
-运行 `node crosscheck.cjs`，可逐步核对 Cub 地御、重置产费、苗地和 Hoof 的组合动作。录屏用的牌局与口播见 [视频拍摄脚本](VIDEO.md)。
+## 输入自己的局面
 
-Forge 规则引擎来自 [Card-Forge/forge](https://github.com/Card-Forge/forge)。`runtime/` 中的 Java 执行器和 Node 客户端来自 [Endstep Studio 的 0.4.14 提交](https://github.com/zixuanyu038-lang/end_step_reader_pro/tree/062948a57e45d2b48d58a5c6e9e002808b6c74bd)，本项目通过 `forge-adapter.cjs` 加入 Elves 的牌张选择和产费处理。
+牌名用英文，每行一张。同名牌可写 `2 Forest`。战场状态可写成 `Gaea's Cradle | 地御:1`、`Llanowar Elves | 失调` 或 `Quirion Ranger | 已用`。需要模拟阻挡或互动时，勾选「加入对手」，填上已知手牌和战场。
+
+- **找到赢法**时，页面展示 Forge 已重放的获胜路线。部分组合会引导搜索展开。后续回合的摸牌由库序种子决定。
+- **本轮未找到斩杀**时，页面展示这次搜索打到的最低血量。有压血路线时，也会列出对应的操作。
+- **加入对手**时，搜索按所填手牌与战场进行，战斗声明由 Forge 策略执行。
+
+结果区可下载 JSON 搜索日志，核对每一步的选择和结算。
+
+## 规则引擎
+
+规则引擎来自 [Card-Forge/forge](https://github.com/Card-Forge/forge)。Java 执行器和 Node 客户端来自 [Endstep Studio 0.4.14](https://github.com/zixuanyu038-lang/end_step_reader_pro/tree/062948a57e45d2b48d58a5c6e9e002808b6c74bd)。`forge-adapter.cjs` 加入了 Elves 的找牌选择、产费和重置互动。
