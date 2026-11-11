@@ -73,6 +73,28 @@ function show(result) {
   byId('diagnostics').hidden=detail.children.length===0;
 }
 
+const manaNames={G:'绿',B:'黑',C:'无色',R:'红',U:'蓝',W:'白'};
+
+function manaText(colors) {
+  return Object.entries(colors).map(([color,count])=>`${count} ${manaNames[color]||color}`).join('、');
+}
+
+function countMana(mana) {
+  const colors={};
+  for (const {color} of mana) colors[color]=(colors[color]||0)+1;
+  return colors;
+}
+
+function describeManaSources(mana) {
+  const bySource=new Map();
+  for (const unit of mana) {
+    const name=unit.sourceName||'法术力池';
+    if (!bySource.has(name)) bySource.set(name,[]);
+    bySource.get(name).push(unit);
+  }
+  return [...bySource].map(([name,units])=>`${name} ${manaText(countMana(units))}`).join('、');
+}
+
 function renderTrace(trace,fixture){
   const steps=byId('steps');steps.replaceChildren();
   let opponentLife=fixture.life;
@@ -81,20 +103,23 @@ function renderTrace(trace,fixture){
     const {action,state}=entry;
     if(action){
       const who=action.actorId===1?'':'对手 ';
-      const verbs={cast:'施放',activate:'启动',play_land:'下',mana:'横置产费'};
+      const tapped=action.tappedSources?.some(source=>source.cardId===action.cardId);
+      const verbs={cast:'施放',activate:'起动',play_land:'下',mana:tapped?'横置':'起动产费异能'};
       const window=state.turn+'/'+state.phase;
       const turn=fixture.turn+Math.floor((state.turn-fixture.turn)/2);
       const timing=window===lastWindow?'':`T${turn} ${phaseName(state.phase)} · `;
       lastWindow=window;
-      const sourceNames=(action.manaPaid||[]).map(x=>x.sourceName);
-      const paid=[...new Set(sourceNames)].map(name=> {
-        const n=sourceNames.filter(source=>source===name).length;
-        return n>1?`${name} ×${n}`:name;
-      });
+      const paid=action.manaPaid||[];
+      const produced=action.manaProduced||[];
       const costs=[...new Set((action.paidCards||[]).flatMap(x=>x.cards.map(c=>c.name)))];
-      const manaNames={G:'绿',B:'黑',C:'无色',R:'红',U:'蓝',W:'白'};
-      const made=Object.entries(entry.generated||{}).map(([color,n])=>`${n} ${manaNames[color]||color}`).join('、');
-      const describe=[made?'产生 '+made:'',paid.length?'付费来源 '+paid.join('、'):'',costs.length?'用作费用 '+costs.join('、'):''].filter(Boolean).join(' · ');
+      const made=manaText(produced.length?countMana(produced):entry.generated||{});
+      const madeBy=produced.some(unit=>unit.sourceId!==action.cardId)?`（${describeManaSources(produced)}）`:'';
+      const describe=[
+        made?`产 ${made}${madeBy}`:'',
+        paid.length?`支付 ${manaText(countMana(paid))}（${describeManaSources(paid)}）`:'',
+        costs.length?'用作费用 '+costs.join('、'):'',
+        action.actorId===1&&(made||paid.length)?`剩余浮费 ${manaText(state.mana||{})||'0'}`:'',
+      ].filter(Boolean).join(' · ');
       const choice=action.declaredX>=0?`（X=${action.declaredX}）`:'';
       const target=action.targetNames?.length?' → '+action.targetNames.join('、'):'';
       details(steps,`${timing}${who}${verbs[action.kind]||'使用'} ${action.cardName}${choice}${target}`,describe);

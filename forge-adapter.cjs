@@ -73,6 +73,23 @@ function extend(source) {
     'sa.isSpell()?"cast":sa.isManaAbility()?"mana":"activate";boolean success;');
   replace('else success=ComputerUtil.handlePlayingSpellAbility',
     'else if(sa.isManaAbility())success=ComputerUtil.playNoStack(actor,sa,context.game,false);\n            else success=ComputerUtil.handlePlayingSpellAbility');
+  replace('            SpellAbility[] actualAbility={sa};', `
+            List<Mana> beforeMana=new ArrayList<>();
+            if(context.includeTrace&&sa.isManaAbility())actor.getManaPool().forEach(beforeMana::add);
+            SpellAbility[] actualAbility={sa};`);
+  replace('                action.put("manaPaid",mana);', `
+                if(sa.isManaAbility()){
+                    List<Object> produced=new ArrayList<>();
+                    for(Mana added:actor.getManaPool()){
+                        if(beforeMana.remove(added))continue;
+                        Card source=added.getSourceCard();
+                        String color=forge.card.MagicColor.toShortString(added.getColor());
+                        if(source==null)produced.add(Map.of("color",color));
+                        else produced.add(Map.of("sourceId",context.external(source),"sourceName",source.getName(),"color",color));
+                    }
+                    action.put("manaProduced",produced);
+                }
+                action.put("manaPaid",mana);`);
   replace('sa.isSpell()?"cast":"activate");', 'sa.isSpell()?"cast":sa.isManaAbility()?"mana":"activate");');
   replace('targetProducts(ctx,p,sa,parts(sa),0,new JsonArray(),result,action,ctx.exhaustive?Integer.MAX_VALUE:Math.min(80,result.size()+8));',
     'costCandidates(ctx,p,sa,result,action);');
