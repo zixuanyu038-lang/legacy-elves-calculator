@@ -1,0 +1,11 @@
+{
+  "name": "legacy-elves-calculator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Forge-backed lethal search for a fixed Legacy Elves deck",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node calculator.cjs",
+    "check:forge": "node crosscheck.cjs"
+  }
+}

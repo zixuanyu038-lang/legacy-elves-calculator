@@ -1,0 +1,8 @@
+.forge/
+.forge-baseline/
+node_modules/
+*.log
+Forge-*.json
+.endstep-data/
+.env
+.env.*

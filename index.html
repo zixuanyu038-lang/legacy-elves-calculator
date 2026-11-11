@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Legacy Elves 斩杀计算器</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Legacy Elves 斩杀计算器</h1>
+      <p>从自己主一、空堆叠开始。填入局面，Forge 会搜索合法动作并重放找到的赢法。</p>
+    </header>
+    <div class="workspace">
+      <form id="position" class="panel">
+        <div class="section-head">
+          <h2>当前局面</h2>
+          <label class="sample">载入示例 <select id="examples"><option value="">选择场景</option></select></label>
+        </div>
+        <p class="help">每行一张英文牌名，重复可写 <code>2 Forest</code>。战场示例 <code>Gaea's Cradle | 横置 | 地御:1</code>。新生物可标 <code>| 失调</code>，本回合已启动的 Ranger 或 Symbiote 可标 <code>| 已用</code>。</p>
+        <div class="grid">
+          <label>己方手牌<textarea id="hand" rows="5" spellcheck="false"></textarea></label>
+          <label>己方战场<textarea id="board" rows="5" spellcheck="false"></textarea></label>
+        </div>
+        <label class="check"><input id="includeOpponent" type="checkbox"> 加入对手</label>
+        <div class="grid" id="opponent-fields" hidden>
+          <label>对手已知手牌<textarea id="oppHand" rows="3" placeholder="如 Swords to Plowshares" spellcheck="false"></textarea></label>
+          <label>对手战场<textarea id="oppBoard" rows="3" placeholder="包括可用的地和阻挡者" spellcheck="false"></textarea></label>
+        </div>
+        <div class="fields">
+          <label>自己生命<input id="ownLife" type="number" min="1" max="200" value="20" required></label>
+          <label><span id="life-label">目标血量</span><input id="life" type="number" min="1" max="200" value="20" required></label>
+          <label>回合<input id="turn" type="number" min="1" max="100" value="3" required></label>
+          <label>已浮绿费<input id="green" type="number" min="0" max="200" value="0" required></label>
+        </div>
+        <label class="check"><input id="landAvailable" type="checkbox"> 本回合还能下地</label>
+        <label class="check"><input id="noSpells" type="checkbox"> 本局还没施放过咒语</label>
+        <details>
+          <summary>坟场、放逐、已知库顶和换备</summary>
+          <div class="grid extras">
+            <label>己方坟场<textarea id="grave" rows="2" spellcheck="false"></textarea></label>
+            <label>己方放逐区<textarea id="exile" rows="2" spellcheck="false"></textarea></label>
+            <label>己方已知库顶 <span>从最上面开始</span><textarea id="top" rows="2" spellcheck="false"></textarea></label>
+            <div></div>
+            <label>从主牌换出<textarea id="cuts" rows="2" spellcheck="false"></textarea></label>
+            <label>从备牌换入<textarea id="adds" rows="2" spellcheck="false"></textarea></label>
+          </div>
+        </details>
+        <details>
+          <summary>搜索范围</summary>
+          <div class="fields">
+            <label>目标<select id="horizon"><option value="0">当回合斩杀</option><option value="2">再搜一个己方回合</option><option value="4">再搜两个己方回合</option><option value="6">再搜三个己方回合</option><option value="8">再搜四个己方回合</option></select></label>
+            <label>预算<select id="budget"><option value="420">420 次</option><option value="1100" selected>1,100 次</option><option value="2800">2,800 次</option></select></label>
+            <label>搜索深度<input id="depth" type="number" min="6" max="32" value="16" required></label>
+            <label>库序种子<input id="seed" type="number" min="1" max="2147483647" value="2488" required></label>
+            <label>单人模式并行<select id="workers"><option value="1">1 个进程</option><option value="2" selected>2 个进程</option><option value="4">4 个进程</option></select></label>
+          </div>
+        </details>
+        <div class="actions"><button id="run" type="submit">搜索赢法</button><button id="cancel" type="button" hidden>取消</button></div>
+      </form>
+      <section class="panel result" aria-labelledby="result-title">
+        <h2 id="result-title">搜索结果</h2>
+        <div id="status" role="status">可先载入「Natural Order 斩杀」示例。</div>
+        <div id="result" hidden>
+          <h3 id="verdict"></h3>
+          <p id="metrics" class="metrics"></p>
+          <p id="scope"></p>
+          <label id="route-options" hidden>已验证赢法<select id="route"></select></label>
+          <ol id="steps"></ol>
+          <div id="response" class="note" hidden></div>
+          <details id="diagnostics" hidden><summary>搜索详情</summary><ul id="detail"></ul></details>
+          <button type="button" class="secondary" id="download">下载可核对的搜索日志</button>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
